@@ -78,6 +78,18 @@ export function hasLeadingNumberPrefix(label: string): boolean {
 }
 
 /**
+ * Strips leading numbering or bullet characters (e.g., "1. ", "1.1. ", "• ") for clean rubric/print display
+ */
+export function cleanNodeLabel(label: unknown): string {
+  if (label === null || label === undefined) return '';
+  const str = typeof label === 'string' ? label : String(label);
+  if (!str) return '';
+  return str
+    .replace(/^\s*(?:\d+(?:\.\d+)*[\.\)\-:]?\s*|[IVX]+[\.\)\-:]\s*|[•◦▪➔\-+*]\s*)+/i, '')
+    .trim();
+}
+
+/**
  * Estimates node dimensions based on depth, label length, summary, and whether semantic badges are visible.
  * In 'vertical' mode, Level 3 & Level 4+ items are grouped as compact bullet items inside their Level 2 card.
  */

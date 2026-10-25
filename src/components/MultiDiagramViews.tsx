@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Plus,
   ChevronRight,
@@ -8,7 +8,6 @@ import {
   Check,
   RotateCcw,
   Sparkles,
-  HelpCircle,
   AlertTriangle,
 } from 'lucide-react';
 import {
@@ -42,53 +41,125 @@ interface SharedDiagramViewProps {
 }
 
 /**
- * Helper to highlight medical numbers/thresholds or semantic badge phrases like a highlighter pen
+ * Smart Medical Keyword Highlighter for Cornell Note:
+ * - For Level 2 titles: subtle highlight on the title or keyword prefix.
+ * - For Level 3 / Level 4+ lines: ONLY highlights the keyword BEFORE the colon `:` (e.g. "Biểu mô:", "Mô liên kết:"),
+ *   keeping the explanation after `:` on a transparent background with crisp #e3e3e3 text so eyes never get fatigued!
+ * - If a Level 3+ line has no colon `:`, it renders clean #e3e3e3 text on a transparent background (no full-sentence highlight).
  */
-function renderHighlightedText(
+function renderCornellSmartText(
   text: string,
+  depth: number,
   badgeType?: MindmapNode['badge'],
   enableHighlight = true
 ): React.ReactNode {
-  if (!enableHighlight) return text;
+  if (!enableHighlight) {
+    return <span className="text-[#e3e3e3]">{text}</span>;
+  }
 
-  const badgeHighlightClass =
+  const badgeKeywordStyle =
     badgeType === 'danger'
-      ? 'bg-[#ef4444]/20 text-[#fca5a5] px-1 rounded border-b border-[#ef4444]/50'
+      ? 'bg-[#ef4444]/20 text-[#fca5a5] px-1.5 py-0.5 rounded font-semibold'
       : badgeType === 'treatment'
-      ? 'bg-[#10b981]/20 text-[#6ee7b7] px-1 rounded border-b border-[#10b981]/50'
+      ? 'bg-[#10b981]/20 text-[#6ee7b7] px-1.5 py-0.5 rounded font-semibold'
       : badgeType === 'diagnostic'
-      ? 'bg-[#3b82f6]/20 text-[#93c5fd] px-1 rounded border-b border-[#3b82f6]/50'
+      ? 'bg-[#3b82f6]/20 text-[#93c5fd] px-1.5 py-0.5 rounded font-semibold'
       : badgeType === 'warning'
-      ? 'bg-[#f59e0b]/20 text-[#fcd34d] px-1 rounded border-b border-[#f59e0b]/50'
+      ? 'bg-[#f59e0b]/20 text-[#fcd34d] px-1.5 py-0.5 rounded font-semibold'
       : badgeType === 'mechanism'
-      ? 'bg-[#a855f7]/20 text-[#d8b4fe] px-1 rounded border-b border-[#a855f7]/50'
-      : null;
+      ? 'bg-[#a855f7]/20 text-[#d8b4fe] px-1.5 py-0.5 rounded font-semibold'
+      : 'bg-[#fdd663]/18 text-[#fde68a] px-1.5 py-0.5 rounded font-semibold';
 
-  // If node has a semantic badge and is short/medium, highlight key medical terms or colon prefix
   const colonIdx = text.indexOf(':');
-  if (colonIdx > 0 && colonIdx < 45) {
-    const prefix = text.slice(0, colonIdx + 1);
-    const rest = text.slice(colonIdx + 1);
+
+  // If there is a keyword before ':' (up to 48 chars), ONLY highlight that keyword before ':'
+  if (colonIdx > 0 && colonIdx <= 48) {
+    const keywordWithColon = text.slice(0, colonIdx + 1);
+    const explanationAfterColon = text.slice(colonIdx + 1);
     return (
       <>
-        <span
-          className={
-            badgeHighlightClass ||
-            'bg-[#fdd663]/15 text-[#fde68a] px-1 rounded font-semibold'
-          }
-        >
-          {prefix}
-        </span>
-        <span>{rest}</span>
+        <span className={badgeKeywordStyle}>{keywordWithColon}</span>
+        <span className="text-[#e3e3e3]">{explanationAfterColon}</span>
       </>
     );
   }
 
-  if (badgeHighlightClass) {
-    return <span className={badgeHighlightClass}>{text}</span>;
+  // For Level 2 section titles without a colon, apply a soft underline/highlight accent to the title
+  if (depth === 2) {
+    return (
+      <span className="bg-[#8ab4f8]/14 text-[#e8f0fe] px-1.5 py-0.5 rounded font-display font-semibold">
+        {text}
+      </span>
+    );
   }
 
-  return text;
+  // For Level 3+ sentences without a colon: keep background 100% transparent and text crisp #e3e3e3
+  return <span className="text-[#e3e3e3]">{text}</span>;
+}
+
+/**
+ * Extracts clinical highlights (notes, summaries, red flags, or badged items) for a node and its children
+ */
+function extractNodeClinicalHighlights(node: MindmapNode): {
+  type: 'danger' | 'treatment' | 'diagnostic' | 'mechanism' | 'warning' | 'summary';
+  text: string;
+}[] {
+  const highlights: {
+    type: 'danger' | 'treatment' | 'diagnostic' | 'mechanism' | 'warning' | 'summary';
+    text: string;
+  }[] = [];
+
+  const cn = node.clinicalNotes;
+  if (cn) {
+    if (cn.redFlags && cn.redFlags.length > 0) {
+      cn.redFlags.forEach((rf) =>
+        highlights.push({ type: 'danger', text: rf })
+      );
+    }
+    if (cn.treatment) {
+      highlights.push({ type: 'treatment', text: cn.treatment });
+    }
+    if (cn.clinicalFeatures) {
+      highlights.push({ type: 'diagnostic', text: cn.clinicalFeatures });
+    }
+    if (cn.pathogenesis) {
+      highlights.push({ type: 'mechanism', text: cn.pathogenesis });
+    }
+    if (cn.pearls) {
+      highlights.push({ type: 'warning', text: cn.pearls });
+    }
+    if (cn.markdown && highlights.length === 0) {
+      highlights.push({ type: 'summary', text: cn.markdown });
+    }
+  }
+
+  if (node.summary) {
+    highlights.push({ type: 'summary', text: node.summary });
+  }
+
+  // Also inspect direct Level 3 children for summaries, notes, or semantic badges
+  if (node.children && node.children.length > 0) {
+    for (const child of node.children) {
+      if (child.clinicalNotes?.markdown) {
+        highlights.push({
+          type: child.badge || 'summary',
+          text: `${child.label}: ${child.clinicalNotes.markdown}`,
+        });
+      } else if (child.summary) {
+        highlights.push({
+          type: child.badge || 'summary',
+          text: `${child.label}: ${child.summary}`,
+        });
+      } else if (child.badge) {
+        highlights.push({
+          type: child.badge,
+          text: child.label,
+        });
+      }
+    }
+  }
+
+  return highlights.slice(0, 4);
 }
 
 /* ========================================================================== */
@@ -138,7 +209,7 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
     return (
       <div
         key={node.id}
-        className={isLevel2 ? 'mb-2.5 last:mb-0' : 'mt-1.5 pl-4'}
+        className={isLevel2 ? 'mb-2.5 last:mb-0' : 'mt-1 pl-4'}
       >
         <div
           onMouseEnter={() => onSetHoveredNodeId(node.id)}
@@ -150,7 +221,7 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
           }}
           style={{
             borderLeft: badgeMeta
-              ? `3.5px solid ${badgeMeta.color}`
+              ? `3px solid ${badgeMeta.color}`
               : isLevel2
               ? `3px solid ${accentColor}`
               : undefined,
@@ -158,10 +229,10 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
           className={`group rounded-lg transition-all cursor-pointer ${
             isLevel2
               ? notebookPaperEffect
-                ? 'bg-[#222327]/90 border border-[#3c4043]/90 border-dashed px-3 py-2 shadow-sm'
-                : 'bg-[#222327] border border-[#3c4043] px-3 py-2'
-              : 'px-2 py-1 hover:bg-white/[0.04]'
-          } ${isSelected ? 'ring-2 ring-[#8ab4f8] bg-[#3f3c5c]/40' : ''}`}
+                ? 'bg-[#202125]/90 border border-[#3c4043]/80 border-dashed px-3 py-2 shadow-sm'
+                : 'bg-[#202125] border border-[#3c4043] px-3 py-2'
+              : 'px-2 py-0.5 hover:bg-white/[0.04]'
+          } ${isSelected ? 'ring-1 ring-[#8ab4f8] bg-[#3f3c5c]/30' : ''}`}
         >
           <div className="flex items-start justify-between gap-2">
             <div
@@ -194,20 +265,21 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
                 <span
                   className={
                     isLevel2
-                      ? 'font-display font-semibold text-[13.5px] text-white leading-snug'
-                      : 'text-[12.5px] text-[#e8eaed] leading-relaxed'
+                      ? 'text-[13.5px] leading-snug'
+                      : 'text-[12.5px] leading-relaxed'
                   }
                 >
-                  {renderHighlightedText(
+                  {renderCornellSmartText(
                     node.label,
+                    depth,
                     node.badge,
                     notebookPaperEffect
                   )}
                 </span>
 
                 {node.summary && (
-                  <p className="text-[11.5px] text-[#9aa0a6] mt-0.5 italic leading-snug">
-                    — {node.summary}
+                  <p className="text-[11.5px] text-[#9aa0a6] mt-0.5 leading-snug">
+                    {node.summary}
                   </p>
                 )}
               </div>
@@ -297,7 +369,7 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
 
           {/* Nested Children (Level 3, Level 4+) */}
           {hasChildren && !isCollapsed && node.children && (
-            <div className="mt-1.5 border-l border-[#3c4043]/80 ml-1.5 space-y-1">
+            <div className="mt-1.5 border-l border-[#3c4043]/70 ml-1.5 space-y-1">
               {node.children.map((child) =>
                 renderOutlineNode(child, depth + 1, accentColor)
               )}
@@ -314,7 +386,7 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
         notebookPaperEffect
           ? {
               backgroundImage:
-                'radial-gradient(rgba(138, 180, 248, 0.14) 1px, transparent 1px)',
+                'radial-gradient(rgba(138, 180, 248, 0.13) 1px, transparent 1px)',
               backgroundSize: '20px 20px',
             }
           : undefined
@@ -322,20 +394,17 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
       className="w-full h-full overflow-y-auto pt-16 pb-16 px-4 md:px-8 select-text bg-[#141517]"
     >
       <div className="max-w-6xl mx-auto bg-[#1b1c1f] border border-[#3c4043] rounded-2xl shadow-2xl overflow-hidden">
-        {/* Top Notebook Title Banner */}
+        {/* Compact Top Notebook Title Banner */}
         <div
           onClick={() => onSelectNode(rootNode.id)}
-          className="px-6 py-4 bg-[#242529] border-b-2 border-[#3c4043] flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer"
+          className="px-5 py-3 bg-[#242529] border-b border-[#3c4043] flex flex-col sm:flex-row sm:items-center justify-between gap-2 cursor-pointer"
         >
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-[11px] font-mono text-[#8ab4f8]">
-              <span>📝 VỞ GẠCH Ý CORNELL NOTE (IPAD / NOTION STYLE)</span>
-            </div>
-            <h1 className="font-display font-bold text-[19px] text-white">
+          <div className="min-w-0">
+            <h1 className="font-display font-bold text-[16.5px] text-white truncate">
               {rootNode.label}
             </h1>
             {rootNode.summary && (
-              <p className="text-[12.5px] text-[#b8bdc2]">{rootNode.summary}</p>
+              <p className="text-[12px] text-[#b8bdc2] mt-0.5">{rootNode.summary}</p>
             )}
           </div>
 
@@ -346,14 +415,14 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
                 e.stopPropagation();
                 setNotebookPaperEffect((prev) => !prev);
               }}
-              className={`px-3 py-1.5 rounded-xl border text-[12px] font-medium flex items-center gap-1.5 transition-colors cursor-pointer ${
+              className={`px-2.5 py-1 rounded-lg border text-[11.5px] font-medium flex items-center gap-1.5 transition-colors cursor-pointer ${
                 notebookPaperEffect
                   ? 'bg-[#3f3c5c] border-[#8ab4f8] text-white'
                   : 'bg-[#1e1f20] border-[#3c4043] text-[#9aa0a6] hover:text-white'
               }`}
             >
               <Sparkles className="w-3.5 h-3.5 text-[#fdd663]" />
-              <span>Sổ tay chấm bi & Bút dạ quang</span>
+              <span>Bút dạ quang Từ khóa</span>
             </button>
 
             {!isReadOnly && (
@@ -363,7 +432,7 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
                   e.stopPropagation();
                   onQuickAddChild(rootNode.id);
                 }}
-                className="px-3 py-1.5 rounded-xl bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#131314] font-display font-semibold text-[12px] flex items-center gap-1 cursor-pointer"
+                className="px-2.5 py-1 rounded-lg bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#131314] font-display font-semibold text-[11.5px] flex items-center gap-1 cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>+ Mục Cấp 1</span>
@@ -372,17 +441,17 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
           </div>
         </div>
 
-        {/* Cornell Note 2-Column Header */}
-        <div className="grid grid-cols-1 md:grid-cols-12 bg-[#18191c] border-b border-[#3c4043] text-[11px] font-mono uppercase tracking-wider text-[#9aa0a6]">
-          <div className="md:col-span-4 px-5 py-2 border-b md:border-b-0 md:border-r border-[#3c4043]">
-            Cột Trái (30%): Mục lớn Cấp 1 & Câu hỏi Gợi nhớ
+        {/* Clean Academic Cornell Note 2-Column Header (28% / 72%) */}
+        <div className="flex flex-col md:flex-row bg-[#18191c] border-b border-[#3c4043] text-[11px] font-display font-bold uppercase tracking-wider text-[#9aa0a6]">
+          <div className="md:w-[28%] px-4 py-2 border-b md:border-b-0 md:border-r border-[#3c4043]">
+            MỤC LỚN & TRỌNG TÂM
           </div>
-          <div className="md:col-span-8 px-5 py-2">
-            Cột Phải (70%): Hệ thống Gạch ý Chi tiết (Cấp 2 • Cấp 3 ◦ Cấp 4 ▪)
+          <div className="md:w-[72%] px-4 py-2">
+            GHI CHÉP CHI TIẾT
           </div>
         </div>
 
-        {/* Cornell Note Rows (Each Level 1 Pillar is a 30% / 70% Cornell Row) */}
+        {/* Cornell Note Rows (28% Left Key Summary / 72% Right Detailed Notes) */}
         <div className="divide-y divide-[#3c4043]">
           {pillars.map((pillar, idx) => {
             const pillarIndex = idx + 1;
@@ -394,23 +463,24 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
             const isCollapsed = Boolean(pillar.collapsed);
             const showPillarNum = !hasLeadingNumberPrefix(pillar.label);
             const hasNotes = hasNodeClinicalNotes(pillar);
+            const pillarNotes = pillar.clinicalNotes;
 
             return (
               <div
                 key={pillar.id}
-                className="grid grid-cols-1 md:grid-cols-12 transition-colors hover:bg-white/[0.01]"
+                className="flex flex-col md:flex-row transition-colors hover:bg-white/[0.01]"
               >
-                {/* LEFT COLUMN (30% -> 4/12 cols): Level 1 Main Topic & Active Recall Cue Questions */}
+                {/* LEFT COLUMN (28%): Level 1 Title + Real Summary / Clinical Note Key Points */}
                 <div
                   onClick={() => onSelectNode(pillar.id)}
                   style={{ borderLeft: `4px solid ${accentColor}` }}
-                  className={`md:col-span-4 p-4 md:border-r border-[#3c4043] bg-[#191a1d]/70 flex flex-col justify-between gap-3 cursor-pointer ${
+                  className={`md:w-[28%] p-4 md:border-r border-[#3c4043] bg-[#191a1d]/70 flex flex-col justify-between gap-2.5 cursor-pointer shrink-0 ${
                     isPillarSelected ? 'bg-[#3f3c5c]/30' : ''
                   }`}
                 >
                   <div className="space-y-2">
                     <div className="flex items-start justify-between gap-2">
-                      <h3 className="font-display font-bold text-[15px] text-white leading-snug">
+                      <h3 className="font-display font-bold text-[14.5px] text-white leading-snug">
                         {showPillarNum && (
                           <span
                             style={{ color: accentColor }}
@@ -434,7 +504,7 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
                               e.stopPropagation();
                               onToggleCollapse(pillar.id);
                             }}
-                            className={`px-2 h-6 rounded-md border text-[10.5px] font-mono flex items-center gap-0.5 ${
+                            className={`px-1.5 h-5 rounded border text-[10px] font-mono flex items-center gap-0.5 ${
                               isCollapsed
                                 ? 'bg-[#3f3c5c] border-[#8ab4f8] text-white'
                                 : 'bg-[#2d2e30] border-[#4b5056] text-white'
@@ -455,32 +525,72 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
                       </div>
                     </div>
 
+                    {/* Display Real Summary or Clinical Notes if present */}
                     {pillar.summary && (
-                      <p className="text-[12px] text-[#b0b5ba] leading-relaxed">
+                      <p className="text-[12px] text-[#d1d5db] bg-[#131314]/80 border border-[#2d2e30] rounded-lg p-2.5 leading-relaxed">
                         {pillar.summary}
                       </p>
                     )}
 
-                    {/* Cornell Cue Questions Box */}
-                    <div className="mt-2 p-2.5 rounded-xl bg-[#131314]/80 border border-[#2d2e30] space-y-1">
-                      <div className="flex items-center gap-1 text-[10.5px] font-mono text-[#fdd663]">
-                        <HelpCircle className="w-3 h-3" />
-                        <span>CÂU HỎI GỢI NHỚ (CUE):</span>
-                      </div>
-                      <p className="text-[11.5px] text-[#9aa0a6] leading-snug">
-                        • Trình bày {directCount || 'các'} phân nhóm cốt lõi của{' '}
-                        <strong className="text-[#e3e3e3]">{pillar.label}</strong>?
-                      </p>
-                      {pillar.children && pillar.children[0] && (
-                        <p className="text-[11.5px] text-[#9aa0a6] leading-snug">
-                          • Đặc điểm lâm sàng & cơ chế của{' '}
-                          <span className="text-[#8ab4f8]">
-                            {pillar.children[0].label}
-                          </span>
-                          ?
-                        </p>
+                    {pillarNotes &&
+                      (pillarNotes.pathogenesis ||
+                        pillarNotes.clinicalFeatures ||
+                        pillarNotes.treatment ||
+                        pillarNotes.pearls ||
+                        pillarNotes.markdown) && (
+                        <div className="p-2.5 rounded-lg bg-[#131314]/60 border border-[#2d2e30] space-y-1 text-[11.5px] text-[#b0b5ba]">
+                          {pillarNotes.pathogenesis && (
+                            <p className="line-clamp-3">
+                              <strong className="text-[#c58af9]">Cơ chế:</strong>{' '}
+                              {pillarNotes.pathogenesis}
+                            </p>
+                          )}
+                          {pillarNotes.treatment && (
+                            <p className="line-clamp-2">
+                              <strong className="text-[#81c995]">Điều trị:</strong>{' '}
+                              {pillarNotes.treatment}
+                            </p>
+                          )}
+                          {pillarNotes.pearls && (
+                            <p className="line-clamp-2">
+                              <strong className="text-[#fdd663]">Lưu ý:</strong>{' '}
+                              {pillarNotes.pearls}
+                            </p>
+                          )}
+                          {!pillarNotes.pathogenesis &&
+                            !pillarNotes.treatment &&
+                            !pillarNotes.pearls &&
+                            pillarNotes.markdown && (
+                              <p className="line-clamp-3">{pillarNotes.markdown}</p>
+                            )}
+                        </div>
                       )}
-                    </div>
+
+                    {/* Concise Subtopic Key Index when neither summary nor clinicalNotes exist on Pillar */}
+                    {!pillar.summary &&
+                      !hasNotes &&
+                      pillar.children &&
+                      pillar.children.length > 0 && (
+                        <div className="pt-1 space-y-1">
+                          <span className="text-[10.5px] font-mono uppercase text-[#9aa0a6] block">
+                            Trọng tâm ({pillar.children.length} mục):
+                          </span>
+                          {pillar.children.map((sub, sIdx) => (
+                            <div
+                              key={sub.id}
+                              className="text-[11.5px] text-[#b8bdc2] flex items-start gap-1.5 leading-snug"
+                            >
+                              <span
+                                style={{ color: accentColor }}
+                                className="font-mono text-[11px]"
+                              >
+                                {pillarIndex}.{sIdx + 1}
+                              </span>
+                              <span className="truncate">{sub.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                   </div>
 
                   {!isReadOnly && (
@@ -492,13 +602,13 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
                       className="self-start px-2.5 py-1 rounded-lg bg-[#2d2e30] hover:bg-[#3c4043] text-[11px] text-[#8ab4f8] flex items-center gap-1 transition-colors cursor-pointer"
                     >
                       <Plus className="w-3 h-3" />
-                      <span>Thêm ý Cấp 2</span>
+                      <span>+ Ý Cấp 2</span>
                     </button>
                   )}
                 </div>
 
-                {/* RIGHT COLUMN (70% -> 8/12 cols): Hierarchical Outline Notes (Level 2, 3, 4+) */}
-                <div className="md:col-span-8 p-4">
+                {/* RIGHT COLUMN (72%): Hierarchical Outline Notes (Level 2, 3, 4+) */}
+                <div className="md:w-[72%] p-4">
                   {!isCollapsed && pillar.children && pillar.children.length > 0 ? (
                     <div>
                       {pillar.children.map((lvl2) =>
@@ -508,9 +618,9 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
                   ) : isCollapsed ? (
                     <div
                       onClick={() => onToggleCollapse(pillar.id)}
-                      className="h-full min-h-[72px] rounded-xl border border-dashed border-[#3c4043] flex items-center justify-center text-[12px] text-[#9aa0a6] hover:text-white hover:border-[#8ab4f8] cursor-pointer transition-colors"
+                      className="h-full min-h-[64px] rounded-xl border border-dashed border-[#3c4043] flex items-center justify-center text-[12px] text-[#9aa0a6] hover:text-white hover:border-[#8ab4f8] cursor-pointer transition-colors"
                     >
-                      Đang thu gọn +{directCount} nhánh Cấp 2 (Chế độ Chỉ Cấp 1). Click để mở vở ghi chi tiết.
+                      Đang thu gọn +{directCount} nhánh Cấp 2. Click để mở chi tiết.
                     </div>
                   ) : (
                     <div className="text-[12px] text-[#70757a] italic">
@@ -528,11 +638,12 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
 };
 
 /* ========================================================================== */
-/* 2. 🐟 CHẾ ĐỘ "SƠ ĐỒ XƯƠNG CÁ" (ISHIKAWA FISHBONE DIAGRAM)                  */
+/* 2. 🐟 CHẾ ĐỘ "SƠ ĐỒ XƯƠNG CÁ" (ISHIKAWA FISHBONE DIAGRAM — FIXED LAYOUT)    */
 /* ========================================================================== */
 export const FishboneDiagramView: React.FC<
   SharedDiagramViewProps & {
     transform: { x: number; y: number; scale: number };
+    onAutoFitMeasured?: (naturalWidth: number, naturalHeight: number) => void;
     renderCompactBulletChildren: (
       items: MindmapNode[],
       depth: number,
@@ -542,25 +653,29 @@ export const FishboneDiagramView: React.FC<
 > = ({
   rootNode,
   selectedNodeId,
-  isReadOnly,
   showBadges,
   activeRecallLevel,
   transform,
+  onAutoFitMeasured,
   onRevealNode,
   onSelectNode,
   onToggleCollapse,
-  onQuickAddChild,
   onSetHoveredNodeId,
   isNodeDepthBlurred,
   hasNodeClinicalNotes,
   renderCompactBulletChildren,
 }) => {
+  const fishboneWrapperRef = useRef<HTMLDivElement>(null);
+
   const visiblePillars =
     !rootNode.collapsed && rootNode.children ? rootNode.children : [];
 
   // Pair up pillars into columns: even index (0, 2, 4...) on TOP of spine, odd index (1, 3, 5...) on BOTTOM of spine
   const pairCount = Math.max(1, Math.ceil(visiblePillars.length / 2));
-  const pairs: { top?: { node: MindmapNode; idx: number }; bottom?: { node: MindmapNode; idx: number } }[] = [];
+  const pairs: {
+    top?: { node: MindmapNode; idx: number };
+    bottom?: { node: MindmapNode; idx: number };
+  }[] = [];
 
   for (let i = 0; i < pairCount; i++) {
     const topIdx = i * 2;
@@ -574,6 +689,16 @@ export const FishboneDiagramView: React.FC<
         : undefined,
     });
   }
+
+  // Measure natural dimensions of the Fishbone diagram and trigger auto Fit-View so top/bottom ribs are never cut off
+  useEffect(() => {
+    if (!fishboneWrapperRef.current || !onAutoFitMeasured) return;
+    const el = fishboneWrapperRef.current;
+    const timer = window.setTimeout(() => {
+      onAutoFitMeasured(el.offsetWidth, el.offsetHeight);
+    }, 30);
+    return () => window.clearTimeout(timer);
+  }, [rootNode, showBadges]);
 
   const renderRibBoneBranch = (
     pillar: MindmapNode,
@@ -592,6 +717,7 @@ export const FishboneDiagramView: React.FC<
     const blurred = isNodeDepthBlurred(pillar.id, 1);
     const visibleLvl2 = !isCollapsed && pillar.children ? pillar.children : [];
 
+    // LEVEL 1 PILLAR HEADER CARD (Always placed closest to the Central Spine!)
     const pillarHeaderCard = (
       <div
         data-mindmap-node="true"
@@ -612,7 +738,7 @@ export const FishboneDiagramView: React.FC<
             : '1px solid #4b5056',
           borderLeft: `4px solid ${accentColor}`,
         }}
-        className="group relative w-[280px] px-3 py-2 bg-[#2d2e30] hover:bg-[#35373a] rounded-xl shadow-lg cursor-pointer transition-colors"
+        className="group relative w-[285px] px-3 py-2 bg-[#2d2e30] hover:bg-[#35373a] rounded-xl shadow-lg cursor-pointer transition-colors"
       >
         <div className="flex items-start justify-between gap-1.5">
           <div
@@ -663,8 +789,10 @@ export const FishboneDiagramView: React.FC<
                     </span>
                     <ChevronRight className="w-3 h-3" />
                   </>
-                ) : (
+                ) : position === 'top' ? (
                   <ChevronDown className="w-3 h-3" />
+                ) : (
+                  <ChevronUp className="w-3 h-3" />
                 )}
               </button>
             )}
@@ -673,6 +801,7 @@ export const FishboneDiagramView: React.FC<
       </div>
     );
 
+    // LEVEL 2 & LEVEL 3+ SUB-BONES LIST (Radiating outward from Level 1 card)
     const subBonesList = visibleLvl2.length > 0 && (
       <div
         style={{ borderLeft: `2.5px solid ${accentColor}` }}
@@ -702,7 +831,7 @@ export const FishboneDiagramView: React.FC<
                   ? `3px solid ${lvl2Badge.color}`
                   : `3px solid ${accentColor}`,
               }}
-              className={`relative w-[260px] px-2.5 py-1.5 rounded-lg bg-[#242528] hover:bg-[#2d2f33] border border-[#3c4043] shadow-sm cursor-pointer transition-colors ${
+              className={`relative w-[265px] px-2.5 py-1.5 rounded-lg bg-[#242528] hover:bg-[#2d2f33] border border-[#3c4043] shadow-sm cursor-pointer transition-colors ${
                 isLvl2Selected ? 'ring-2 ring-[#8ab4f8]' : ''
               }`}
             >
@@ -763,28 +892,28 @@ export const FishboneDiagramView: React.FC<
 
     // Diagonal SVG bone joint meeting the central horizontal fishbone spine
     const diagonalBoneJoint = (
-      <svg width={80} height={32} className="ml-6 block overflow-visible shrink-0">
+      <svg width={80} height={28} className="ml-6 block overflow-visible shrink-0">
         {position === 'top' ? (
           <>
             <line
               x1={0}
               y1={0}
-              x2={28}
-              y2={32}
+              x2={24}
+              y2={28}
               stroke={accentColor}
               strokeWidth={3}
               strokeLinecap="round"
             />
-            <circle cx={28} cy={32} r={4} fill={accentColor} />
+            <circle cx={24} cy={28} r={4} fill={accentColor} />
           </>
         ) : (
           <>
-            <circle cx={28} cy={0} r={4} fill={accentColor} />
+            <circle cx={24} cy={0} r={4} fill={accentColor} />
             <line
-              x1={28}
+              x1={24}
               y1={0}
               x2={0}
-              y2={32}
+              y2={28}
               stroke={accentColor}
               strokeWidth={3}
               strokeLinecap="round"
@@ -794,19 +923,25 @@ export const FishboneDiagramView: React.FC<
       </svg>
     );
 
+    /**
+     * CRITICAL FIX FOR LỖI 2:
+     * Whether TOP rib or BOTTOM rib, the Level 1 Pillar Header Card (`pillarHeaderCard`)
+     * ALWAYS sits right next to `diagonalBoneJoint` (closest to the central spine!),
+     * and `subBonesList` (Level 2 & Level 3) radiates outward from it!
+     */
     return (
       <div className="flex flex-col">
         {position === 'top' ? (
           <>
-            {pillarHeaderCard}
             {subBonesList}
+            {pillarHeaderCard}
             {diagonalBoneJoint}
           </>
         ) : (
           <>
             {diagonalBoneJoint}
-            {subBonesList}
             {pillarHeaderCard}
+            {subBonesList}
           </>
         )}
       </div>
@@ -815,82 +950,83 @@ export const FishboneDiagramView: React.FC<
 
   return (
     <div
+      ref={fishboneWrapperRef}
       style={{
         transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
         transformOrigin: '0 0',
       }}
-      className="relative inline-flex items-center pointer-events-auto select-none p-12"
+      className="relative inline-flex flex-col pointer-events-auto select-none pt-10 pb-12 pl-16 pr-[360px]"
     >
-      {/* FISH TAIL (Left end of spine) */}
-      <div className="flex items-center shrink-0">
-        <svg width={44} height={64} className="shrink-0">
-          <polygon
-            points="0,8 40,32 0,56 12,32"
-            fill="#3f3c5c"
-            stroke="#8ab4f8"
-            strokeWidth="2"
-          />
-        </svg>
+      {/* TOP RIBS ROW (Even Pillars: 1, 3, 5... — bottom-aligned to touch the central spine) */}
+      <div className="flex items-end gap-7 px-6">
+        {pairs.map((pair, pIdx) => (
+          <div
+            key={`top-slot-${pIdx}`}
+            className="w-[295px] flex flex-col justify-end"
+          >
+            {pair.top &&
+              renderRibBoneBranch(pair.top.node, pair.top.idx, 'top')}
+          </div>
+        ))}
       </div>
 
-      {/* FISH BODY: Alternating Top & Bottom Ribs along Central Horizontal Spine */}
-      <div className="flex flex-col">
-        {/* TOP RIBS ROW (Even Pillars: 1, 3, 5...) */}
-        <div className="flex items-end gap-8 px-6">
-          {pairs.map((pair, pIdx) => (
-            <div key={`top-slot-${pIdx}`} className="w-[295px] flex flex-col justify-end">
-              {pair.top &&
-                renderRibBoneBranch(pair.top.node, pair.top.idx, 'top')}
-            </div>
-          ))}
+      {/* CENTRAL HORIZONTAL SPINE LINE WITH LOCKED TAIL (LEFT) & FISH HEAD (RIGHT) */}
+      <div className="relative h-[6px] w-full bg-gradient-to-r from-[#8ab4f8]/60 via-[#8ab4f8] to-[#c58af9] rounded-full shadow-[0_0_12px_rgba(138,180,248,0.45)] my-0.5 flex items-center">
+        {/* FISH TAIL: Locked 100% dead-center on the left end of the spine */}
+        <div className="absolute right-full top-1/2 -translate-y-1/2 flex items-center pr-0.5">
+          <svg width={42} height={56} className="shrink-0">
+            <polygon
+              points="0,6 38,28 0,50 12,28"
+              fill="#3f3c5c"
+              stroke="#8ab4f8"
+              strokeWidth="2"
+            />
+          </svg>
         </div>
 
-        {/* CENTRAL HORIZONTAL SPINE LINE */}
-        <div className="h-[6px] bg-gradient-to-r from-[#8ab4f8]/60 via-[#8ab4f8] to-[#c58af9] rounded-full shadow-[0_0_12px_rgba(138,180,248,0.45)] my-0.5" />
+        {/* FISH HEAD (Root Node Level 0): Locked 100% dead-center on the right end of the spine! */}
+        <div className="absolute left-full top-1/2 -translate-y-1/2 flex items-center -ml-0.5">
+          <svg width={26} height={34} className="shrink-0">
+            <polygon points="0,5 24,17 0,29" fill="#c58af9" />
+          </svg>
 
-        {/* BOTTOM RIBS ROW (Odd Pillars: 2, 4, 6...) */}
-        <div className="flex items-start gap-8 px-6">
-          {pairs.map((pair, pIdx) => (
-            <div key={`bot-slot-${pIdx}`} className="w-[295px] flex flex-col justify-start">
-              {pair.bottom &&
-                renderRibBoneBranch(pair.bottom.node, pair.bottom.idx, 'bottom')}
+          <div
+            data-mindmap-node="true"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectNode(rootNode.id);
+            }}
+            style={{
+              border:
+                selectedNodeId === rootNode.id
+                  ? '2.5px solid #ffffff'
+                  : '2.5px solid #8ab4f8',
+            }}
+            className="w-[305px] px-4 py-3 rounded-r-[26px] rounded-l-[12px] bg-[#3f3c5c] hover:bg-[#49456b] shadow-2xl cursor-pointer transition-colors"
+          >
+            <div className="font-display font-bold text-[15px] text-white leading-snug">
+              {rootNode.label}
             </div>
-          ))}
+            {rootNode.summary && (
+              <p className="text-[11.5px] text-[#e3e3e3]/90 mt-1 pt-1 border-t border-white/10 leading-snug">
+                {rootNode.summary}
+              </p>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* FISH HEAD (Right end of spine -> Root Node Level 0) */}
-      <div className="flex items-center shrink-0 -ml-1">
-        <svg width={28} height={36} className="shrink-0">
-          <polygon points="0,6 26,18 0,30" fill="#8ab4f8" />
-        </svg>
-
-        <div
-          data-mindmap-node="true"
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelectNode(rootNode.id);
-          }}
-          style={{
-            border:
-              selectedNodeId === rootNode.id
-                ? '2.5px solid #ffffff'
-                : '2.5px solid #8ab4f8',
-          }}
-          className="w-[300px] px-4 py-3.5 rounded-r-[28px] rounded-l-[12px] bg-[#3f3c5c] hover:bg-[#49456b] shadow-2xl cursor-pointer transition-colors"
-        >
-          <div className="text-[10px] font-mono uppercase tracking-wider text-[#8ab4f8] mb-0.5">
-            🐟 ĐẦU XƯƠNG CÁ (CHỦ ĐỀ GỐC)
+      {/* BOTTOM RIBS ROW (Odd Pillars: 2, 4, 6... — top-aligned to touch the central spine) */}
+      <div className="flex items-start gap-7 px-6">
+        {pairs.map((pair, pIdx) => (
+          <div
+            key={`bot-slot-${pIdx}`}
+            className="w-[295px] flex flex-col justify-start"
+          >
+            {pair.bottom &&
+              renderRibBoneBranch(pair.bottom.node, pair.bottom.idx, 'bottom')}
           </div>
-          <div className="font-display font-bold text-[15.5px] text-white leading-snug">
-            {rootNode.label}
-          </div>
-          {rootNode.summary && (
-            <p className="text-[11.5px] text-[#e3e3e3]/90 mt-1 pt-1 border-t border-white/10 leading-snug">
-              {rootNode.summary}
-            </p>
-          )}
-        </div>
+        ))}
       </div>
     </div>
   );
@@ -978,11 +1114,6 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
                     <span className="text-[12.5px] text-[#e8eaed] leading-snug">
                       {item.label}
                     </span>
-                    {item.summary && (
-                      <span className="text-[11.5px] text-[#9aa0a6] ml-1.5 italic">
-                        ({item.summary})
-                      </span>
-                    )}
                   </div>
                 </div>
 
@@ -1018,19 +1149,21 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
 
   return (
     <div className="w-full h-full overflow-y-auto pt-16 pb-16 px-4 md:px-6 select-text">
-      <div className="max-w-[1600px] mx-auto space-y-4">
-        {/* Table Title Header */}
+      <div className="max-w-[1600px] mx-auto space-y-3">
+        {/* Compact Slim Title Header (py-2.5) */}
         <div
           onClick={() => onSelectNode(rootNode.id)}
-          className="px-5 py-3.5 rounded-xl bg-[#3f3c5c] border-2 border-[#8ab4f8] flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer shadow-lg"
+          className="px-4 py-2.5 rounded-xl bg-[#3f3c5c] border border-[#8ab4f8] flex items-center justify-between gap-3 cursor-pointer shadow-md"
         >
-          <div>
-            <div className="text-[11px] font-mono uppercase tracking-wider text-[#8ab4f8]">
-              ⚖️ BẢNG MA TRẬN SO SÁNH & ĐỐI CHIẾU LÂM SÀNG
-            </div>
-            <h1 className="font-display font-bold text-[18px] text-white">
+          <div className="flex items-center gap-3 min-w-0">
+            <h1 className="font-display font-bold text-[15.5px] text-white truncate">
               {rootNode.label}
             </h1>
+            {rootNode.summary && (
+              <span className="text-[12px] text-[#e3e3e3]/80 truncate hidden lg:inline">
+                — {rootNode.summary}
+              </span>
+            )}
           </div>
 
           {!isReadOnly && (
@@ -1039,10 +1172,10 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
                 e.stopPropagation();
                 onQuickAddChild(rootNode.id);
               }}
-              className="px-3 py-1.5 rounded-lg bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#131314] font-display font-semibold text-[12px] flex items-center gap-1 shrink-0 cursor-pointer"
+              className="px-2.5 py-1 rounded-lg bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#131314] font-display font-semibold text-[11.5px] flex items-center gap-1 shrink-0 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>+ Thêm Nhánh Cấp 1</span>
+              <span>+ Nhánh Cấp 1</span>
             </button>
           )}
         </div>
@@ -1051,18 +1184,18 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
         <div className="rounded-2xl border border-[#3c4043] bg-[#1b1c1f] shadow-2xl overflow-x-auto">
           <table className="w-full border-collapse text-left">
             <thead>
-              <tr className="bg-[#242529] border-b-2 border-[#3c4043] text-[11.5px] font-display font-bold uppercase tracking-wider text-[#9aa0a6]">
-                <th className="py-3 px-4 border-r border-[#3c4043] w-[22%]">
+              <tr className="bg-[#242529] border-b-2 border-[#3c4043] text-[11px] font-display font-bold uppercase tracking-wider text-[#9aa0a6]">
+                <th className="py-2.5 px-4 border-r border-[#3c4043] w-[20%]">
                   Nhánh Trụ Cột (Cấp 1)
                 </th>
-                <th className="py-3 px-4 border-r border-[#3c4043] w-[25%]">
+                <th className="py-2.5 px-4 border-r border-[#3c4043] w-[23%]">
                   Phân Nhóm / Tiêu Chí (Cấp 2)
                 </th>
-                <th className="py-3 px-4 border-r border-[#3c4043] w-[35%]">
+                <th className="py-2.5 px-4 border-r border-[#3c4043] w-[33%]">
                   Chi Tiết Cấp 3 & Cấp 4+ (Đặc điểm / Phác đồ)
                 </th>
-                <th className="py-3 px-4 w-[18%]">
-                  Điểm Nhấn Lâm Sàng & Ôn Tập
+                <th className="py-2.5 px-4 w-[24%]">
+                  Tóm Tắt & Ghi Chú Lâm Sàng
                 </th>
               </tr>
             </thead>
@@ -1080,7 +1213,6 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
                     ? pillar.children
                     : [];
 
-                // If Pillar is collapsed (e.g. Level Filter = "Chỉ Cấp 1") or has no children, render a single summary row
                 if (visibleLvl2.length === 0) {
                   return (
                     <tr
@@ -1090,7 +1222,7 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
                       <td
                         onClick={() => onSelectNode(pillar.id)}
                         style={{ borderLeft: `4px solid ${accentColor}` }}
-                        className="p-4 border-r border-[#3c4043] align-top bg-[#1e1f23] cursor-pointer"
+                        className="p-3.5 border-r border-[#3c4043] align-top bg-[#1e1f23] cursor-pointer"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="font-display font-bold text-[14px] text-white">
@@ -1116,22 +1248,18 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
                             </button>
                           )}
                         </div>
-                        {pillar.summary && (
-                          <p className="text-[11.5px] text-[#9aa0a6] mt-1">
-                            {pillar.summary}
-                          </p>
-                        )}
                       </td>
                       <td
                         colSpan={3}
                         onClick={() =>
                           directCount > 0 && onToggleCollapse(pillar.id)
                         }
-                        className="p-4 text-[12px] text-[#9aa0a6] italic cursor-pointer hover:text-white"
+                        className="p-3.5 text-[12px] text-[#9aa0a6] cursor-pointer hover:text-white"
                       >
-                        {isCollapsed
-                          ? `Đang ẩn +${directCount} phân nhóm Cấp 2 (Chế độ Chỉ Cấp 1). Click để mở rộng bảng so sánh.`
-                          : 'Chưa có phân nhóm Cấp 2.'}
+                        {pillar.summary ||
+                          (isCollapsed
+                            ? `Đang ẩn +${directCount} phân nhóm Cấp 2. Click để mở rộng.`
+                            : 'Chưa có phân nhóm Cấp 2.')}
                       </td>
                     </tr>
                   );
@@ -1144,7 +1272,9 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
                   const lvl2Badge = lvl2.badge
                     ? SEMANTIC_BADGE_CONFIG[lvl2.badge]
                     : null;
-                  const cn = lvl2.clinicalNotes || pillar.clinicalNotes;
+                  const highlights = extractNodeClinicalHighlights(lvl2);
+                  const fallbackPillarSummary =
+                    highlights.length === 0 ? pillar.summary : undefined;
 
                   return (
                     <tr
@@ -1157,11 +1287,11 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
                           rowSpan={visibleLvl2.length}
                           onClick={() => onSelectNode(pillar.id)}
                           style={{ borderLeft: `4px solid ${accentColor}` }}
-                          className="p-4 border-r border-[#3c4043] align-top bg-[#191a1e] cursor-pointer"
+                          className="p-3.5 border-r border-[#3c4043] align-top bg-[#191a1e] cursor-pointer"
                         >
                           <div className="sticky top-4 space-y-2">
                             <div className="flex items-start justify-between gap-2">
-                              <h3 className="font-display font-bold text-[14.5px] text-white leading-snug">
+                              <h3 className="font-display font-bold text-[14px] text-white leading-snug">
                                 {showPillarNum && (
                                   <span
                                     style={{ color: accentColor }}
@@ -1240,11 +1370,6 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
                             <div className="font-display font-semibold text-[13.5px] text-white leading-snug">
                               {lvl2.label}
                             </div>
-                            {lvl2.summary && (
-                              <p className="text-[11.5px] text-[#9aa0a6] leading-snug">
-                                {lvl2.summary}
-                              </p>
-                            )}
                           </div>
 
                           {lvl2DirectCount > 0 && (
@@ -1289,19 +1414,22 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
                         )}
                       </td>
 
-                      {/* COLUMN 4: CLINICAL NOTES HIGHLIGHT & MASTERY */}
+                      {/* COLUMN 4: DIRECT CLINICAL SUMMARY & NOTES + COMPACT MASTERY */}
                       <td
                         onClick={() => onSelectNode(lvl2.id)}
                         className="p-3.5 align-top cursor-pointer space-y-2"
                       >
                         <div className="flex items-center justify-between gap-1">
+                          <span className="text-[10px] font-mono uppercase text-[#9aa0a6]">
+                            Trọng tâm LS
+                          </span>
                           <div className="flex items-center gap-1">
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 onSetNodeMastery(lvl2.id, 'mastered');
                               }}
-                              className={`px-2 py-0.5 rounded text-[10.5px] font-medium border ${
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${
                                 lvl2.mastery === 'mastered'
                                   ? 'bg-[#10b981]/20 border-[#10b981] text-[#10b981]'
                                   : 'bg-[#242528] border-[#3c4043] text-[#9aa0a6] hover:text-white'
@@ -1314,54 +1442,62 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
                                 e.stopPropagation();
                                 onSetNodeMastery(lvl2.id, 'review');
                               }}
-                              className={`px-2 py-0.5 rounded text-[10.5px] font-medium border ${
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${
                                 lvl2.mastery === 'review'
                                   ? 'bg-[#f59e0b]/20 border-[#f59e0b] text-[#f59e0b]'
                                   : 'bg-[#242528] border-[#3c4043] text-[#9aa0a6] hover:text-white'
                               }`}
                             >
-                              ! Ôn lại
+                              ! Ôn
                             </button>
                           </div>
                         </div>
 
-                        {cn &&
-                        (cn.redFlags?.length ||
-                          cn.treatment ||
-                          cn.pathogenesis ||
-                          cn.pearls ||
-                          cn.markdown) ? (
-                          <div className="p-2 rounded-lg bg-[#141518] border border-[#2d2e30] space-y-1 text-[11px]">
-                            {cn.redFlags && cn.redFlags.length > 0 && (
-                              <div className="text-[#f28b82] flex items-start gap-1">
-                                <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
-                                <span className="line-clamp-2">
-                                  {cn.redFlags[0]}
-                                </span>
-                              </div>
-                            )}
-                            {cn.treatment && (
-                              <div className="text-[#81c995] line-clamp-2">
-                                💊 {cn.treatment}
-                              </div>
-                            )}
-                            {cn.pearls && (
-                              <div className="text-[#fdd663] line-clamp-2">
-                                💡 {cn.pearls}
-                              </div>
-                            )}
-                            {!cn.redFlags?.length &&
-                              !cn.treatment &&
-                              !cn.pearls && (
-                                <div className="text-[#9aa0a6] line-clamp-2">
-                                  📖 {cn.pathogenesis || cn.markdown}
+                        {highlights.length > 0 ? (
+                          <div
+                            className={`space-y-1.5 text-[11.5px] leading-snug ${
+                              lvl2Blurred
+                                ? 'blur-[5px] opacity-55 select-none'
+                                : ''
+                            }`}
+                          >
+                            {highlights.map((h, hIdx) => {
+                              const colorClass =
+                                h.type === 'danger'
+                                  ? 'text-[#fca5a5] bg-[#ef4444]/10 border-[#ef4444]/30'
+                                  : h.type === 'treatment'
+                                  ? 'text-[#6ee7b7] bg-[#10b981]/10 border-[#10b981]/30'
+                                  : h.type === 'diagnostic'
+                                  ? 'text-[#93c5fd] bg-[#3b82f6]/10 border-[#3b82f6]/30'
+                                  : h.type === 'mechanism'
+                                  ? 'text-[#d8b4fe] bg-[#a855f7]/10 border-[#a855f7]/30'
+                                  : h.type === 'warning'
+                                  ? 'text-[#fde68a] bg-[#f59e0b]/10 border-[#f59e0b]/30'
+                                  : 'text-[#d1d5db] bg-[#141518] border-[#2d2e30]';
+
+                              return (
+                                <div
+                                  key={hIdx}
+                                  className={`p-2 rounded-lg border ${colorClass}`}
+                                >
+                                  {h.type === 'danger' && (
+                                    <AlertTriangle className="w-3 h-3 inline mr-1 text-[#ef4444]" />
+                                  )}
+                                  <span>{h.text}</span>
                                 </div>
-                              )}
+                              );
+                            })}
+                          </div>
+                        ) : fallbackPillarSummary ? (
+                          <div className="p-2 rounded-lg bg-[#141518] border border-[#2d2e30] text-[11.5px] text-[#b8bdc2] leading-snug">
+                            {fallbackPillarSummary}
                           </div>
                         ) : (
-                          <span className="text-[11px] text-[#70757a] block">
-                            Click để thêm/xem ghi chú LS
-                          </span>
+                          <div className="p-2 rounded-lg bg-[#141518]/60 border border-[#2d2e30]/60 text-[11.5px] text-[#9aa0a6] leading-snug">
+                            {lvl2.children && lvl2.children[0]
+                              ? lvl2.children[0].label
+                              : lvl2.label}
+                          </div>
                         )}
                       </td>
                     </tr>

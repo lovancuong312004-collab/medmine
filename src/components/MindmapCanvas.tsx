@@ -51,6 +51,8 @@ interface MindmapCanvasProps {
   activeRecallLevel: ActiveRecallLevel;
   onChangeActiveRecall: (level: ActiveRecallLevel) => void;
   onExportCurrentLessonJson: () => void;
+  onOpenEssayStudio?: () => void;
+  onOpenPrintStudio?: () => void;
 }
 
 export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
@@ -65,6 +67,8 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
   activeRecallLevel,
   onChangeActiveRecall,
   onExportCurrentLessonJson,
+  onOpenEssayStudio,
+  onOpenPrintStudio,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [viewMode, setViewMode] = useState<MindmapViewMode>('horizontal');
@@ -95,6 +99,44 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
   const isScrollablePageMode =
     viewMode === 'bento' || viewMode === 'cornell' || viewMode === 'matrix';
 
+  const fishboneSizeRef = useRef<{ width: number; height: number }>({
+    width: 1280,
+    height: 760,
+  });
+
+  const fitFishboneToViewport = useCallback(
+    (naturalWidth: number, naturalHeight: number) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const safeLeft = 64;
+      const safeTop = 82;
+      const availW = Math.max(480, rect.width - safeLeft - 36);
+      const availH = Math.max(360, rect.height - safeTop - 28);
+
+      const rawScale = Math.min(availW / naturalWidth, availH / naturalHeight);
+      const clampedScale = Math.min(Math.max(rawScale, 0.52), 0.78);
+
+      const scaledW = naturalWidth * clampedScale;
+      const scaledH = naturalHeight * clampedScale;
+
+      const centeredX = Math.max(
+        safeLeft,
+        safeLeft + (availW - scaledW) / 2
+      );
+      const centeredY = Math.max(
+        safeTop,
+        safeTop + (availH - scaledH) / 2
+      );
+
+      setTransform({
+        x: Math.round(centeredX),
+        y: Math.round(centeredY),
+        scale: Number(clampedScale.toFixed(2)),
+      });
+    },
+    []
+  );
+
   /**
    * Smart Fit View & Readable Zoom (92% - 96%)
    */
@@ -114,32 +156,38 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
         targetMode === 'horizontal'
           ? 0.96
           : targetMode === 'fishbone'
-          ? 0.88
+          ? 0.72
           : 0.92;
 
       if (targetMode === 'vertical') {
         const pillarCount =
           !rootNode.collapsed && rootNode.children ? rootNode.children.length : 0;
+        const colWidth = 284;
+        const colGap = 16;
         const totalFlowWidth =
           pillarCount > 0
-            ? pillarCount * 290 + (pillarCount - 1) * 20
-            : 320;
+            ? pillarCount * colWidth + (pillarCount - 1) * colGap
+            : 360;
+        const availW = Math.max(480, rect.width - 96);
+        const fittedScale = Math.min(
+          0.94,
+          Math.max(0.56, Number((availW / totalFlowWidth).toFixed(2)))
+        );
         const centerX = totalFlowWidth / 2;
-        const newX = Math.max(28, rect.width / 2 - centerX * targetScale);
+        const newX = Math.max(56, rect.width / 2 - centerX * fittedScale);
         setTransform({
-          x: newX,
-          y: 64,
-          scale: targetScale,
+          x: Math.round(newX),
+          y: 68,
+          scale: fittedScale,
         });
         return;
       }
 
       if (targetMode === 'fishbone') {
-        setTransform({
-          x: 44,
-          y: 72,
-          scale: targetScale,
-        });
+        fitFishboneToViewport(
+          fishboneSizeRef.current.width,
+          fishboneSizeRef.current.height
+        );
         return;
       }
 
@@ -157,7 +205,13 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
         setTransform({ x: 64, y: 68, scale: 0.96 });
       }
     },
-    [layout.nodes, rootNode.collapsed, rootNode.children, viewMode]
+    [
+      fitFishboneToViewport,
+      layout.nodes,
+      rootNode.collapsed,
+      rootNode.children,
+      viewMode,
+    ]
   );
 
   // Center at readable zoom when switching lessons or view modes
@@ -353,6 +407,8 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
           const childHasNotes = hasNodeClinicalNotes(child);
           const childBlurred = isNodeDepthBlurred(child.id, depth);
           const bulletDotColor = childBadge ? childBadge.color : accentColor;
+          const colonIdx = child.label.indexOf(':');
+          const hasKeywordPrefix = colonIdx > 0 && colonIdx <= 48;
 
           return (
             <div key={child.id}>
@@ -401,7 +457,19 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                       </span>
                     )}
                     <span className="text-[12.5px] text-[#e8eaed] leading-snug">
-                      {child.label}
+                      {hasKeywordPrefix ? (
+                        <>
+                          <strong
+                            style={{ color: bulletDotColor }}
+                            className="font-bold"
+                          >
+                            {child.label.slice(0, colonIdx + 1)}
+                          </strong>
+                          <span>{child.label.slice(colonIdx + 1)}</span>
+                        </>
+                      ) : (
+                        child.label
+                      )}
                     </span>
                     {child.summary && (
                       <p className="text-[11px] text-[#9aa0a6] mt-0.5 leading-snug">
@@ -699,40 +767,62 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
           </button>
         </div>
 
-        {/* Right: Active Recall Selector */}
-        <div className="pointer-events-auto flex items-center gap-1 bg-[#1e1f20]/95 backdrop-blur-md border border-[#2d2e30] rounded-xl p-1 shadow-lg">
-          <div className="flex items-center gap-1 px-2">
-            {activeRecallLevel === 'off' ? (
-              <Eye className="w-3.5 h-3.5 text-[#8ab4f8]" />
-            ) : (
-              <EyeOff className="w-3.5 h-3.5 text-[#fdd663]" />
-            )}
-            <span className="text-[11px] font-medium text-[#9aa0a6] whitespace-nowrap hidden md:inline">
-              Ôn thi:
-            </span>
-          </div>
-
-          {(
-            [
-              { id: 'off', label: 'Tắt' },
-              { id: 'level2', label: 'Mờ Cấp 2+' },
-              { id: 'level3', label: 'Mờ Cấp 3+' },
-            ] as const
-          ).map((mode) => (
+        {/* Right: Medical Essay Barem Studio + Print A4 Studio + Active Recall Selector */}
+        <div className="pointer-events-auto flex flex-wrap items-center gap-2">
+          {onOpenEssayStudio && (
             <button
-              key={mode.id}
-              onClick={() => onChangeActiveRecall(mode.id)}
-              className={`px-2.5 py-1.5 rounded-lg text-[12px] font-medium transition-colors whitespace-nowrap cursor-pointer ${
-                activeRecallLevel === mode.id
-                  ? mode.id === 'off'
-                    ? 'bg-[#2d2e30] text-white'
-                    : 'bg-[#f59e0b] text-[#131314] font-semibold'
-                  : 'text-[#9aa0a6] hover:text-white hover:bg-[#2d2e30]/60'
-              }`}
+              onClick={onOpenEssayStudio}
+              title="Mở Trung tâm Luyện Thi Tự Luận theo Barem 0.25đ - 0.5đ & Từ khóa Y khoa"
+              className="px-3 py-1.5 rounded-xl bg-[#3f3c5c] hover:bg-[#4e4a70] border border-[#8ab4f8]/60 text-white font-display font-semibold text-[12px] flex items-center gap-1.5 shadow-lg transition-all whitespace-nowrap cursor-pointer"
             >
-              {mode.label}
+              <span>✍️ Luyện Thi Tự Luận (Barem)</span>
             </button>
-          ))}
+          )}
+
+          {onOpenPrintStudio && (
+            <button
+              onClick={onOpenPrintStudio}
+              title="Xuất PDF / In A4 Đề Cương Tự Luận, Infographic Ngang & Đề Khuyết Chữ"
+              className="px-3 py-1.5 rounded-xl bg-[#1e1f20]/95 hover:bg-[#2d2e30] border border-[#3c4043] text-[#e3e3e3] font-display font-semibold text-[12px] flex items-center gap-1.5 shadow-lg transition-all whitespace-nowrap cursor-pointer"
+            >
+              <span>🖨️ Xuất PDF / In A4</span>
+            </button>
+          )}
+
+          <div className="flex items-center gap-1 bg-[#1e1f20]/95 backdrop-blur-md border border-[#2d2e30] rounded-xl p-1 shadow-lg">
+            <div className="flex items-center gap-1 px-2">
+              {activeRecallLevel === 'off' ? (
+                <Eye className="w-3.5 h-3.5 text-[#8ab4f8]" />
+              ) : (
+                <EyeOff className="w-3.5 h-3.5 text-[#fdd663]" />
+              )}
+              <span className="text-[11px] font-medium text-[#9aa0a6] whitespace-nowrap hidden md:inline">
+                Ôn thi:
+              </span>
+            </div>
+
+            {(
+              [
+                { id: 'off', label: 'Tắt' },
+                { id: 'level2', label: 'Mờ Cấp 2+' },
+                { id: 'level3', label: 'Mờ Cấp 3+' },
+              ] as const
+            ).map((mode) => (
+              <button
+                key={mode.id}
+                onClick={() => onChangeActiveRecall(mode.id)}
+                className={`px-2.5 py-1.5 rounded-lg text-[12px] font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                  activeRecallLevel === mode.id
+                    ? mode.id === 'off'
+                      ? 'bg-[#2d2e30] text-white'
+                      : 'bg-[#f59e0b] text-[#131314] font-semibold'
+                    : 'text-[#9aa0a6] hover:text-white hover:bg-[#2d2e30]/60'
+                }`}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -1022,17 +1112,23 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
               isNodeDepthBlurred={isNodeDepthBlurred}
               hasNodeClinicalNotes={hasNodeClinicalNotes}
               renderCompactBulletChildren={renderCompactBulletChildren}
+              onAutoFitMeasured={(w, h) => {
+                fishboneSizeRef.current = { width: w, height: h };
+                fitFishboneToViewport(w, h);
+              }}
             />
           ) : viewMode === 'vertical' ? (
             /* ================================================================= */
-            /* MODE 2: NATURAL CSS FLEXBOX VERTICAL FLOWCHART (ZERO OVERLAP)     */
+            /* MODE 2: TEXTBOOK INFOGRAPHIC VERTICAL SCHEMATIC                   */
+            /* Top Lesson Box -> Wide Definition Box -> Orthogonal Bus Lines ->  */
+            /* Color-Coded Columns -> Center-Connected Level 2 Cards             */
             /* ================================================================= */
             <div
               style={{
                 transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
                 transformOrigin: '0 0',
               }}
-              className="relative inline-flex flex-col items-center pointer-events-auto select-none pb-24 pr-24"
+              className="relative inline-flex flex-col items-center pointer-events-auto select-none pb-28 pr-28"
             >
               {(() => {
                 const rootSelected = selectedNodeId === rootNode.id;
@@ -1041,21 +1137,101 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                 const rootHasNotes = hasNodeClinicalNotes(rootNode);
                 const visiblePillars =
                   !rootNode.collapsed && rootNode.children ? rootNode.children : [];
-                const colWidth = 290;
-                const colGap = 20;
+
+                const colWidth = 284;
+                const colGap = 16; // gap-4
                 const totalRowWidth =
                   visiblePillars.length > 0
                     ? visiblePillars.length * colWidth +
                       (visiblePillars.length - 1) * colGap
-                    : 320;
+                    : 420;
                 const rootCenterX = totalRowWidth / 2;
+
+                // Distinct Textbook Infographic Column Themes (Blue, Green, Orange, Purple, Rose, Teal)
+                const INFOGRAPHIC_COL_THEMES = [
+                  {
+                    headerBg: '#1d4ed8', // Cột 1: Xanh dương
+                    headerBorder: '#60a5fa',
+                    cardBg: '#162033',
+                    cardHoverBg: '#1c2942',
+                    cardBorder: '#3b82f6',
+                    spineColor: '#3b82f6',
+                    keywordColor: '#93c5fd',
+                    badgeBg: '#2563eb',
+                  },
+                  {
+                    headerBg: '#15803d', // Cột 2: Xanh lá
+                    headerBorder: '#4ade80',
+                    cardBg: '#13251e',
+                    cardHoverBg: '#193128',
+                    cardBorder: '#22c55e',
+                    spineColor: '#22c55e',
+                    keywordColor: '#86efac',
+                    badgeBg: '#16a34a',
+                  },
+                  {
+                    headerBg: '#c2410c', // Cột 3: Cam
+                    headerBorder: '#fb923c',
+                    cardBg: '#271a14',
+                    cardHoverBg: '#33221a',
+                    cardBorder: '#f97316',
+                    spineColor: '#f97316',
+                    keywordColor: '#fdba74',
+                    badgeBg: '#ea580c',
+                  },
+                  {
+                    headerBg: '#6d28d9', // Cột 4: Tím
+                    headerBorder: '#a78bfa',
+                    cardBg: '#201833',
+                    cardHoverBg: '#2a1f42',
+                    cardBorder: '#8b5cf6',
+                    spineColor: '#8b5cf6',
+                    keywordColor: '#c4b5fd',
+                    badgeBg: '#7c3aed',
+                  },
+                  {
+                    headerBg: '#be185d', // Cột 5: Hồng đỏ
+                    headerBorder: '#f472b6',
+                    cardBg: '#291523',
+                    cardHoverBg: '#361b2e',
+                    cardBorder: '#ec4899',
+                    spineColor: '#ec4899',
+                    keywordColor: '#f9a8d4',
+                    badgeBg: '#db2777',
+                  },
+                  {
+                    headerBg: '#0f766e', // Cột 6: Xanh cổ vịt
+                    headerBorder: '#2dd4bf',
+                    cardBg: '#122526',
+                    cardHoverBg: '#173133',
+                    cardBorder: '#14b8a6',
+                    spineColor: '#14b8a6',
+                    keywordColor: '#5eead4',
+                    badgeBg: '#0d9488',
+                  },
+                ];
+
+                const generalDefinitionText =
+                  rootNode.summary ||
+                  (visiblePillars.length > 0
+                    ? `Hệ thống hóa ${visiblePillars.length} nhánh trọng tâm: ${visiblePillars
+                        .map((p) => p.label.replace(/^\s*\d+[\.\)\-:]\s*/, ''))
+                        .join(' · ')}`
+                    : '');
+
+                const firstColCenterX = colWidth / 2;
+                const lastColCenterX =
+                  visiblePillars.length > 0
+                    ? (visiblePillars.length - 1) * (colWidth + colGap) +
+                      colWidth / 2
+                    : rootCenterX;
 
                 return (
                   <div
                     style={{ width: totalRowWidth }}
                     className="flex flex-col items-center"
                   >
-                    {/* LEVEL 0: ROOT NODE CARD (Natural height: auto) */}
+                    {/* 1. TOP LESSON TITLE BOX (Deep Royal Indigo / Blue Textbook Header) */}
                     <div
                       data-mindmap-node="true"
                       onClick={(e) => {
@@ -1063,30 +1239,24 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                         onSelectNode(rootNode.id);
                       }}
                       style={{
-                        width: 320,
+                        minWidth: 340,
+                        maxWidth: 680,
                         border: rootSelected
-                          ? '2px solid #ffffff'
-                          : '2px solid #8ab4f8',
+                          ? '2.5px solid #ffffff'
+                          : '2px solid #60a5fa',
                       }}
-                      className="group relative px-3.5 py-2.5 bg-[#3f3c5c] hover:bg-[#49456b] rounded-[12px] shadow-xl transition-colors cursor-pointer"
+                      className="group relative px-6 py-3 bg-gradient-to-r from-[#1e3a8a] via-[#312e81] to-[#1e3a8a] hover:brightness-110 rounded-xl shadow-2xl text-center transition-all cursor-pointer"
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="font-display font-bold text-[15.5px] text-white leading-snug">
-                            {rootNode.label}
-                          </div>
-                          {rootNode.summary && (
-                            <p className="text-[11.5px] text-[#e3e3e3]/90 mt-1 pt-1 border-t border-white/10 leading-snug">
-                              {rootNode.summary}
-                            </p>
-                          )}
-                        </div>
+                      <div className="flex items-center justify-center gap-2">
+                        <span className="font-display font-extrabold text-[17px] uppercase tracking-wide text-white leading-snug">
+                          {rootNode.label}
+                        </span>
                         {rootHasNotes && (
                           <span
-                            title="Có ghi chú lâm sàng"
-                            className="text-[#8ab4f8] shrink-0 pt-0.5"
+                            title="Xem ghi chú lâm sàng"
+                            className="text-[#93c5fd] shrink-0"
                           >
-                            <BookOpen className="w-3.5 h-3.5" />
+                            <BookOpen className="w-4 h-4" />
                           </span>
                         )}
                       </div>
@@ -1097,74 +1267,119 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                             e.stopPropagation();
                             onQuickAddChild(rootNode.id);
                           }}
-                          title="Thêm nhánh Cấp 1"
-                          className="opacity-0 group-hover:opacity-100 absolute -bottom-2.5 right-3 w-5 h-5 rounded-full bg-[#2d2e30] hover:bg-[#8ab4f8] text-[#9aa0a6] hover:text-[#131314] border border-[#3c4043] flex items-center justify-center transition-all shadow z-10"
+                          title="Thêm Cột Cấp 1"
+                          className="opacity-0 group-hover:opacity-100 absolute -bottom-2.5 right-3 w-5 h-5 rounded-full bg-[#1e3a8a] hover:bg-[#60a5fa] text-white hover:text-[#131314] border border-[#60a5fa] flex items-center justify-center transition-all shadow z-10"
                         >
                           <Plus className="w-3 h-3" />
                         </button>
                       )}
-
-                      {rootHasChildren && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleNodeToggleCollapse(rootNode.id);
-                          }}
-                          title={
-                            rootNode.collapsed
-                              ? `Mở rộng ${rootDirectCount} nhánh Cấp 1`
-                              : `Thu gọn ${rootDirectCount} nhánh Cấp 1`
-                          }
-                          className={`absolute left-1/2 -translate-x-1/2 -bottom-3 h-5 px-1.5 rounded-full border flex items-center justify-center gap-0.5 transition-all shadow-md cursor-pointer z-10 ${
-                            rootNode.collapsed
-                              ? 'bg-[#3f3c5c] border-[#8ab4f8] text-white hover:bg-[#514d75]'
-                              : 'bg-[#2d2e30] border-[#5f6368] text-[#e3e3e3] hover:bg-[#3c4043]'
-                          }`}
-                        >
-                          {rootNode.collapsed ? (
-                            <>
-                              <span className="text-[10px] font-mono font-bold text-[#8ab4f8] pl-0.5">
-                                +{rootDirectCount}
-                              </span>
-                              <ChevronDown className="w-3 h-3" />
-                            </>
-                          ) : (
-                            <ChevronUp className="w-3 h-3" />
-                          )}
-                        </button>
-                      )}
                     </div>
 
-                    {/* SMOOTH SVG CONNECTOR STRIP FROM ROOT TO LEVEL 1 COLUMNS */}
+                    {/* 2. STRAIGHT VERTICAL CONNECTOR DOWN TO WIDE DEFINITION BANNER */}
+                    {generalDefinitionText && (
+                      <>
+                        <div className="w-[2.5px] h-3.5 bg-[#60a5fa] shrink-0" />
+                        <div
+                          data-mindmap-node="true"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectNode(rootNode.id);
+                          }}
+                          style={{
+                            width: Math.min(totalRowWidth - 40, 820),
+                            minWidth: 320,
+                          }}
+                          className="relative px-5 py-2.5 bg-[#1b2234] border-2 border-[#3b82f6]/70 rounded-xl shadow-lg text-center cursor-pointer hover:border-[#60a5fa] transition-colors"
+                        >
+                          <div className="text-[12.5px] text-[#e2e8f0] leading-relaxed font-medium">
+                            <strong className="text-[#93c5fd] font-bold uppercase text-[11.5px] mr-1.5">
+                              Định nghĩa & Tổng quan:
+                            </strong>
+                            {generalDefinitionText}
+                          </div>
+
+                          {/* Collapse / Expand All Pillars Button */}
+                          {rootHasChildren && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleNodeToggleCollapse(rootNode.id);
+                              }}
+                              title={
+                                rootNode.collapsed
+                                  ? `Mở rộng ${rootDirectCount} cột Cấp 1`
+                                  : `Thu gọn ${rootDirectCount} cột Cấp 1`
+                              }
+                              className={`absolute left-1/2 -translate-x-1/2 -bottom-3 h-5 px-2 rounded-full border flex items-center justify-center gap-0.5 transition-all shadow-md cursor-pointer z-10 ${
+                                rootNode.collapsed
+                                  ? 'bg-[#1d4ed8] border-[#93c5fd] text-white'
+                                  : 'bg-[#1e293b] border-[#60a5fa] text-[#e2e8f0] hover:bg-[#334155]'
+                              }`}
+                            >
+                              {rootNode.collapsed ? (
+                                <>
+                                  <span className="text-[10px] font-mono font-bold text-white pl-0.5">
+                                    +{rootDirectCount}
+                                  </span>
+                                  <ChevronDown className="w-3 h-3" />
+                                </>
+                              ) : (
+                                <ChevronUp className="w-3 h-3" />
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    {/* 3. ORTHOGONAL 90-DEGREE BUS LINE TO LEVEL 1 COLUMNS (Zero curvy lines!) */}
                     {visiblePillars.length > 0 && (
                       <svg
                         width={totalRowWidth}
-                        height={40}
+                        height={38}
                         className="block pointer-events-none overflow-visible shrink-0"
                       >
+                        {/* Center vertical stem from definition box down to horizontal bus */}
+                        <line
+                          x1={rootCenterX}
+                          y1={0}
+                          x2={rootCenterX}
+                          y2={18}
+                          stroke="#60a5fa"
+                          strokeWidth={2.5}
+                        />
+                        {/* Horizontal orthogonal bus bar connecting first column to last column */}
+                        {visiblePillars.length > 1 && (
+                          <line
+                            x1={firstColCenterX}
+                            y1={18}
+                            x2={lastColCenterX}
+                            y2={18}
+                            stroke="#60a5fa"
+                            strokeWidth={2.5}
+                          />
+                        )}
+                        {/* Vertical 90-degree drop lines into the top center of each Level 1 column */}
                         {visiblePillars.map((pillar, idx) => {
-                          const targetX = idx * (colWidth + colGap) + colWidth / 2;
-                          const accent =
-                            pillar.accentColor ||
-                            LEVEL1_PILLAR_ACCENTS[
-                              idx % LEVEL1_PILLAR_ACCENTS.length
+                          const targetX =
+                            idx * (colWidth + colGap) + colWidth / 2;
+                          const colTheme =
+                            INFOGRAPHIC_COL_THEMES[
+                              idx % INFOGRAPHIC_COL_THEMES.length
                             ];
-                          const pathD = `M ${rootCenterX} 0 C ${rootCenterX} 20, ${targetX} 20, ${targetX} 40`;
                           return (
-                            <g key={`root-edge-${pillar.id}`}>
-                              <path
-                                d={pathD}
-                                fill="none"
-                                stroke={accent}
-                                strokeWidth={2}
-                                strokeOpacity={0.85}
-                                strokeLinecap="round"
+                            <g key={`ortho-edge-${pillar.id}`}>
+                              <line
+                                x1={targetX}
+                                y1={18}
+                                x2={targetX}
+                                y2={36}
+                                stroke={colTheme.headerBorder}
+                                strokeWidth={2.5}
                               />
-                              <circle
-                                cx={targetX}
-                                cy={40}
-                                r={2.5}
-                                fill={accent}
+                              <polygon
+                                points={`${targetX - 4.5},31 ${targetX + 4.5},31 ${targetX},38`}
+                                fill={colTheme.headerBorder}
                               />
                             </g>
                           );
@@ -1172,15 +1387,14 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                       </svg>
                     )}
 
-                    {/* LEVEL 1 COLUMNS ROW (Natural Flexbox: display: flex; align-items: flex-start; gap: 20px) */}
+                    {/* 4. LEVEL 1 INFOGRAPHIC COLUMNS ROW (Flexbox: items-start gap-4) */}
                     {visiblePillars.length > 0 && (
-                      <div className="flex items-start gap-[20px]">
+                      <div className="flex items-start gap-4">
                         {visiblePillars.map((pillar, idx) => {
                           const pillarIndex = idx + 1;
-                          const accentColor =
-                            pillar.accentColor ||
-                            LEVEL1_PILLAR_ACCENTS[
-                              idx % LEVEL1_PILLAR_ACCENTS.length
+                          const colTheme =
+                            INFOGRAPHIC_COL_THEMES[
+                              idx % INFOGRAPHIC_COL_THEMES.length
                             ];
                           const isPillarSelected = selectedNodeId === pillar.id;
                           const pillarDirectCount = getDirectChildrenCount(pillar);
@@ -1199,9 +1413,9 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                             <div
                               key={pillar.id}
                               style={{ width: colWidth }}
-                              className="flex flex-col shrink-0"
+                              className="flex flex-col items-center shrink-0"
                             >
-                              {/* LEVEL 1 PILLAR HEADER BOX */}
+                              {/* LEVEL 1 COLUMN HEADER BOX (Distinct Color per Column) */}
                               <div
                                 data-mindmap-node="true"
                                 onMouseEnter={() => setHoveredNodeId(pillar.id)}
@@ -1220,18 +1434,12 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                                   onSelectNode(pillar.id);
                                 }}
                                 style={{
-                                  borderTop: isPillarSelected
-                                    ? '2px solid #8ab4f8'
-                                    : '1px solid #4b5056',
-                                  borderRight: isPillarSelected
-                                    ? '2px solid #8ab4f8'
-                                    : '1px solid #4b5056',
-                                  borderBottom: isPillarSelected
-                                    ? '2px solid #8ab4f8'
-                                    : '1px solid #4b5056',
-                                  borderLeft: `4px solid ${accentColor}`,
+                                  backgroundColor: colTheme.headerBg,
+                                  border: isPillarSelected
+                                    ? '2.5px solid #ffffff'
+                                    : `2px solid ${colTheme.headerBorder}`,
                                 }}
-                                className="group relative w-full px-3 py-2.5 bg-[#2d2e30] hover:bg-[#35373a] rounded-[10px] shadow-md transition-colors cursor-pointer"
+                                className="group relative w-full px-3.5 py-2.5 rounded-xl shadow-lg transition-all cursor-pointer hover:brightness-110"
                               >
                                 <div className="flex items-start justify-between gap-1.5">
                                   <div
@@ -1241,19 +1449,16 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                                         : 'blur-0 opacity-100'
                                     }`}
                                   >
-                                    <div className="font-display font-semibold text-[14px] text-white leading-snug">
+                                    <div className="font-display font-bold text-[14px] text-white leading-snug">
                                       {showPillarNum && (
-                                        <span
-                                          style={{ color: accentColor }}
-                                          className="font-mono font-bold mr-1"
-                                        >
+                                        <span className="font-mono font-extrabold mr-1.5 text-white/95">
                                           {pillarIndex}.
                                         </span>
                                       )}
                                       <span>{pillar.label}</span>
                                     </div>
                                     {pillar.summary && (
-                                      <p className="text-[11.5px] text-[#b8bdc2] mt-1 pt-1 border-t border-white/10 leading-snug">
+                                      <p className="text-[11.5px] text-white/90 mt-1 pt-1 border-t border-white/20 leading-snug">
                                         {pillar.summary}
                                       </p>
                                     )}
@@ -1263,18 +1468,18 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                                     {pillarHasNotes && (
                                       <span
                                         title="Có ghi chú lâm sàng"
-                                        className="text-[#8ab4f8] opacity-85"
+                                        className="text-white/90"
                                       >
-                                        <BookOpen className="w-3 h-3" />
+                                        <BookOpen className="w-3.5 h-3.5" />
                                       </span>
                                     )}
                                     {pillar.mastery === 'mastered' && (
-                                      <span className="text-[11px] font-bold text-[#10b981]">
+                                      <span className="text-[11px] font-bold text-[#a7f3d0]">
                                         ✓
                                       </span>
                                     )}
                                     {pillar.mastery === 'review' && (
-                                      <span className="text-[11px] font-bold text-[#f59e0b]">
+                                      <span className="text-[11px] font-bold text-[#fde68a]">
                                         !
                                       </span>
                                     )}
@@ -1288,8 +1493,8 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                                       e.stopPropagation();
                                       onQuickAddChild(pillar.id);
                                     }}
-                                    title="Thêm nhánh Cấp 2"
-                                    className="opacity-0 group-hover:opacity-100 absolute -bottom-2 right-2.5 w-4.5 h-4.5 rounded-full bg-[#2d2e30] hover:bg-[#8ab4f8] text-[#9aa0a6] hover:text-[#131314] border border-[#3c4043] flex items-center justify-center transition-all shadow z-10"
+                                    title="Thêm Khung Cấp 2"
+                                    className="opacity-0 group-hover:opacity-100 absolute -bottom-2 right-2.5 w-4.5 h-4.5 rounded-full bg-[#131314] hover:bg-white text-white hover:text-[#131314] border border-white/60 flex items-center justify-center transition-all shadow z-10"
                                   >
                                     <Plus className="w-2.5 h-2.5" />
                                   </button>
@@ -1304,18 +1509,14 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                                     }}
                                     title={
                                       pillar.collapsed
-                                        ? `Mở ${pillarDirectCount} nhánh Cấp 2`
-                                        : `Thu gọn ${pillarDirectCount} nhánh Cấp 2`
+                                        ? `Mở ${pillarDirectCount} khung Cấp 2`
+                                        : `Thu gọn ${pillarDirectCount} khung Cấp 2`
                                     }
-                                    className={`absolute right-8 -bottom-2.5 h-5 px-1.5 rounded-full border flex items-center justify-center gap-0.5 transition-all shadow-md cursor-pointer z-10 ${
-                                      pillar.collapsed
-                                        ? 'bg-[#3f3c5c] border-[#8ab4f8] text-white hover:bg-[#514d75]'
-                                        : 'bg-[#2d2e30] border-[#5f6368] text-[#e3e3e3] hover:bg-[#3c4043]'
-                                    }`}
+                                    className="absolute right-8 -bottom-2.5 h-5 px-1.5 rounded-full bg-[#131314] border border-white/50 text-white flex items-center justify-center gap-0.5 transition-all shadow-md cursor-pointer z-10"
                                   >
                                     {pillar.collapsed ? (
                                       <>
-                                        <span className="text-[10px] font-mono font-bold text-[#8ab4f8] pl-0.5">
+                                        <span className="text-[10px] font-mono font-bold text-white pl-0.5">
                                           +{pillarDirectCount}
                                         </span>
                                         <ChevronDown className="w-3 h-3" />
@@ -1327,15 +1528,10 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                                 )}
                               </div>
 
-                              {/* LEVEL 2 CARDS STACK (Natural vertical Flexbox with left spine connector — NEVER overlaps!) */}
+                              {/* 5. LEVEL 2 BOXES BELOW EACH COLUMN (Connected by short center vertical stems!) */}
                               {visibleLevel2Nodes.length > 0 && (
-                                <div
-                                  style={{
-                                    borderLeft: `2px solid ${accentColor}88`,
-                                  }}
-                                  className="ml-3.5 pl-3.5 pt-3 flex flex-col gap-3 relative"
-                                >
-                                  {visibleLevel2Nodes.map((lvl2Node) => {
+                                <div className="w-full flex flex-col items-center">
+                                  {visibleLevel2Nodes.map((lvl2Node, l2Idx) => {
                                     const isLvl2Selected =
                                       selectedNodeId === lvl2Node.id;
                                     const lvl2DirectCount =
@@ -1350,211 +1546,442 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                                     const lvl2Badge = lvl2Node.badge
                                       ? SEMANTIC_BADGE_CONFIG[lvl2Node.badge]
                                       : null;
+                                    const visibleLvl3Nodes =
+                                      !lvl2Node.collapsed && lvl2Node.children
+                                        ? lvl2Node.children
+                                        : [];
 
                                     return (
-                                      <div
-                                        key={lvl2Node.id}
-                                        data-mindmap-node="true"
-                                        onMouseEnter={() =>
-                                          setHoveredNodeId(lvl2Node.id)
-                                        }
-                                        onMouseLeave={() =>
-                                          setHoveredNodeId(null)
-                                        }
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          if (
-                                            activeRecallLevel !== 'off' &&
-                                            !revealedNodeIds[lvl2Node.id]
-                                          ) {
-                                            setRevealedNodeIds((prev) => ({
-                                              ...prev,
-                                              [lvl2Node.id]: true,
-                                            }));
-                                          }
-                                          onSelectNode(lvl2Node.id);
-                                        }}
-                                        style={{
-                                          borderTop: isLvl2Selected
-                                            ? '1.5px solid #8ab4f8'
-                                            : '1px solid #3c4043',
-                                          borderRight: isLvl2Selected
-                                            ? '1.5px solid #8ab4f8'
-                                            : '1px solid #3c4043',
-                                          borderBottom: isLvl2Selected
-                                            ? '1.5px solid #8ab4f8'
-                                            : '1px solid #3c4043',
-                                          borderLeft: lvl2Badge
-                                            ? `3.5px solid ${lvl2Badge.color}`
-                                            : isLvl2Selected
-                                            ? '2px solid #8ab4f8'
-                                            : `3px solid ${accentColor}`,
-                                        }}
-                                        className="group relative w-full h-auto px-3 py-2 bg-[#242528] hover:bg-[#2d2f33] rounded-[10px] shadow-sm transition-colors cursor-pointer"
-                                      >
-                                        {/* Horizontal connector tick from left vertical column spine into Level 2 box */}
-                                        <span
-                                          style={{
-                                            backgroundColor: `${accentColor}88`,
-                                          }}
-                                          className="absolute -left-[15px] top-4 w-[14px] h-[2px] pointer-events-none"
-                                        />
-
-                                        {/* Optional Semantic Badge when toggled ON */}
-                                        {showBadges && lvl2Badge && (
-                                          <div className="mb-1">
-                                            <span
-                                              style={{
-                                                color: lvl2Badge.color,
-                                                backgroundColor:
-                                                  lvl2Badge.bgColor,
-                                              }}
-                                              className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold"
-                                            >
-                                              {lvl2Badge.dot}{' '}
-                                              {lvl2Badge.shortLabel}
-                                            </span>
-                                          </div>
-                                        )}
-
-                                        {/* Level 2 Header & Summary */}
-                                        <div className="flex items-start justify-between gap-1.5">
+                                      <React.Fragment key={lvl2Node.id}>
+                                        {/* SHORT CENTER VERTICAL CONNECTOR SEGMENT BETWEEN BOXES */}
+                                        <div className="flex flex-col items-center shrink-0">
                                           <div
-                                            className={`min-w-0 flex-1 transition-all duration-150 ${
-                                              lvl2Blurred
-                                                ? 'blur-[5px] opacity-55 select-none'
-                                                : 'blur-0 opacity-100'
-                                            }`}
-                                          >
-                                            <div className="font-display font-semibold text-[13px] text-[#f1f3f4] leading-snug">
-                                              {lvl2Node.label}
-                                            </div>
-                                            {lvl2Node.summary && (
-                                              <p className="text-[11.5px] text-[#b8bdc2] mt-1 pt-1 border-t border-white/10 leading-snug">
-                                                {lvl2Node.summary}
-                                              </p>
-                                            )}
-                                          </div>
-
-                                          <div className="flex items-center gap-1 shrink-0 pt-0.5">
-                                            {lvl2HasNotes && (
-                                              <span
-                                                title="Có ghi chú lâm sàng"
-                                                className="text-[#8ab4f8] opacity-85"
-                                              >
-                                                <BookOpen className="w-3 h-3" />
-                                              </span>
-                                            )}
-                                            {lvl2Node.mastery === 'mastered' && (
-                                              <span className="text-[11px] font-bold text-[#10b981]">
-                                                ✓
-                                              </span>
-                                            )}
-                                            {lvl2Node.mastery === 'review' && (
-                                              <span className="text-[11px] font-bold text-[#f59e0b]">
-                                                !
-                                              </span>
-                                            )}
-                                          </div>
+                                            style={{
+                                              backgroundColor:
+                                                colTheme.spineColor,
+                                            }}
+                                            className="w-[2.5px] h-3"
+                                          />
+                                          <div
+                                            style={{
+                                              borderTopColor:
+                                                colTheme.spineColor,
+                                            }}
+                                            className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[5px]"
+                                          />
                                         </div>
 
-                                        {/* Grouped Level 3 & Level 4+ Bullet Points inside Level 2 Box */}
-                                        {!lvl2Node.collapsed &&
-                                          lvl2Node.children &&
-                                          lvl2Node.children.length > 0 &&
-                                          renderCompactBulletChildren(
-                                            lvl2Node.children,
-                                            3,
-                                            accentColor
+                                        {/* LEVEL 2 CARD */}
+                                        <div
+                                          data-mindmap-node="true"
+                                          onMouseEnter={() =>
+                                            setHoveredNodeId(lvl2Node.id)
+                                          }
+                                          onMouseLeave={() =>
+                                            setHoveredNodeId(null)
+                                          }
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (
+                                              activeRecallLevel !== 'off' &&
+                                              !revealedNodeIds[lvl2Node.id]
+                                            ) {
+                                              setRevealedNodeIds((prev) => ({
+                                                ...prev,
+                                                [lvl2Node.id]: true,
+                                              }));
+                                            }
+                                            onSelectNode(lvl2Node.id);
+                                          }}
+                                          style={{
+                                            backgroundColor: colTheme.cardBg,
+                                            border: isLvl2Selected
+                                              ? '2px solid #ffffff'
+                                              : `1.5px solid ${colTheme.cardBorder}`,
+                                          }}
+                                          className="group relative w-full h-auto px-3 py-2.5 rounded-xl shadow-md transition-all cursor-pointer hover:brightness-110"
+                                        >
+                                          {/* Optional Semantic Badge when toggled ON */}
+                                          {showBadges && lvl2Badge && (
+                                            <div className="mb-1">
+                                              <span
+                                                style={{
+                                                  color: lvl2Badge.color,
+                                                  backgroundColor:
+                                                    lvl2Badge.bgColor,
+                                                }}
+                                                className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                                              >
+                                                {lvl2Badge.dot}{' '}
+                                                {lvl2Badge.shortLabel}
+                                              </span>
+                                            </div>
                                           )}
 
-                                        {/* Active Recall Quick Mastery Actions */}
-                                        {activeRecallLevel !== 'off' && (
-                                          <div className="opacity-0 group-hover:opacity-100 absolute -top-2.5 right-4 flex items-center gap-1 bg-[#131314] border border-[#3c4043] rounded-md px-1.5 py-0.5 shadow-lg transition-opacity z-10">
-                                            <button
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                onSetNodeMastery(
-                                                  lvl2Node.id,
-                                                  'mastered'
-                                                );
-                                              }}
-                                              title="Đánh dấu: Đã nhớ"
-                                              className={`p-0.5 rounded hover:bg-[#10b981]/20 ${
-                                                lvl2Node.mastery === 'mastered'
-                                                  ? 'text-[#10b981]'
-                                                  : 'text-[#9aa0a6]'
-                                              }`}
-                                            >
-                                              <Check className="w-3 h-3" />
-                                            </button>
-                                            <button
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                onSetNodeMastery(
-                                                  lvl2Node.id,
-                                                  'review'
-                                                );
-                                              }}
-                                              title="Đánh dấu: Cần ôn lại"
-                                              className={`p-0.5 rounded hover:bg-[#f59e0b]/20 ${
-                                                lvl2Node.mastery === 'review'
-                                                  ? 'text-[#f59e0b]'
-                                                  : 'text-[#9aa0a6]'
-                                              }`}
-                                            >
-                                              <RotateCcw className="w-3 h-3" />
-                                            </button>
-                                          </div>
-                                        )}
-
-                                        {/* Quick Add Child on Level 2 */}
-                                        {!isReadOnly && (
-                                          <button
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              onQuickAddChild(lvl2Node.id);
+                                          {/* Level 2 Header & Summary */}
+                                          <div
+                                            style={{
+                                              borderBottomColor:
+                                                visibleLvl3Nodes.length > 0 ||
+                                                lvl2Node.summary
+                                                  ? `${colTheme.cardBorder}55`
+                                                  : 'transparent',
                                             }}
-                                            title="Thêm ý Cấp 3"
-                                            className="opacity-0 group-hover:opacity-100 absolute -bottom-2 right-2.5 w-4.5 h-4.5 rounded-full bg-[#2d2e30] hover:bg-[#8ab4f8] text-[#9aa0a6] hover:text-[#131314] border border-[#3c4043] flex items-center justify-center transition-all shadow z-10"
-                                          >
-                                            <Plus className="w-2.5 h-2.5" />
-                                          </button>
-                                        )}
-
-                                        {/* Collapse / Expand Level 3 bullets inside Level 2 */}
-                                        {lvl2HasChildren && (
-                                          <button
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleNodeToggleCollapse(
-                                                lvl2Node.id
-                                              );
-                                            }}
-                                            title={
-                                              lvl2Node.collapsed
-                                                ? `Mở ${lvl2DirectCount} ý chi tiết`
-                                                : `Thu gọn ${lvl2DirectCount} ý chi tiết`
-                                            }
-                                            className={`absolute right-8 -bottom-2.5 h-5 px-1.5 rounded-full border flex items-center justify-center gap-0.5 transition-all shadow-md cursor-pointer z-10 ${
-                                              lvl2Node.collapsed
-                                                ? 'bg-[#3f3c5c] border-[#8ab4f8] text-white hover:bg-[#514d75]'
-                                                : 'bg-[#2d2e30] border-[#5f6368] text-[#e3e3e3] hover:bg-[#3c4043]'
+                                            className={`flex items-start justify-between gap-1.5 ${
+                                              visibleLvl3Nodes.length > 0 ||
+                                              lvl2Node.summary
+                                                ? 'pb-1.5 mb-2 border-b'
+                                                : ''
                                             }`}
                                           >
-                                            {lvl2Node.collapsed ? (
-                                              <>
-                                                <span className="text-[10px] font-mono font-bold text-[#8ab4f8] pl-0.5">
-                                                  +{lvl2DirectCount}
+                                            <div
+                                              className={`min-w-0 flex-1 transition-all duration-150 ${
+                                                lvl2Blurred
+                                                  ? 'blur-[5px] opacity-55 select-none'
+                                                  : 'blur-0 opacity-100'
+                                              }`}
+                                            >
+                                              <div
+                                                style={{
+                                                  color: colTheme.keywordColor,
+                                                }}
+                                                className="font-display font-bold text-[13px] leading-snug"
+                                              >
+                                                {!hasLeadingNumberPrefix(
+                                                  lvl2Node.label
+                                                ) && (
+                                                  <span className="font-mono mr-1">
+                                                    {pillarIndex}.{l2Idx + 1}.
+                                                  </span>
+                                                )}
+                                                <span className="text-white">
+                                                  {lvl2Node.label}
                                                 </span>
-                                                <ChevronDown className="w-3 h-3" />
-                                              </>
-                                            ) : (
-                                              <ChevronUp className="w-3 h-3" />
-                                            )}
-                                          </button>
-                                        )}
-                                      </div>
+                                              </div>
+                                              {lvl2Node.summary && (
+                                                <p className="text-[11.5px] text-[#cbd5e1] mt-1 leading-snug">
+                                                  {lvl2Node.summary}
+                                                </p>
+                                              )}
+                                            </div>
+
+                                            <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                                              {lvl2HasNotes && (
+                                                <span
+                                                  title="Có ghi chú lâm sàng"
+                                                  style={{
+                                                    color: colTheme.keywordColor,
+                                                  }}
+                                                >
+                                                  <BookOpen className="w-3 h-3" />
+                                                </span>
+                                              )}
+                                              {lvl2Node.mastery ===
+                                                'mastered' && (
+                                                <span className="text-[11px] font-bold text-[#10b981]">
+                                                  ✓
+                                                </span>
+                                              )}
+                                              {lvl2Node.mastery ===
+                                                'review' && (
+                                                <span className="text-[11px] font-bold text-[#f59e0b]">
+                                                  !
+                                                </span>
+                                              )}
+                                            </div>
+                                          </div>
+
+                                          {/* 6. LEVEL 3 ITEMS INSIDE LEVEL 2 BOX (Colored numbered circles ① ② ③ + Bold keywords) */}
+                                          {visibleLvl3Nodes.length > 0 && (
+                                            <div className="space-y-1.5">
+                                              {visibleLvl3Nodes.map(
+                                                (lvl3Node, l3Idx) => {
+                                                  const isLvl3Selected =
+                                                    selectedNodeId ===
+                                                    lvl3Node.id;
+                                                  const lvl3Blurred =
+                                                    isNodeDepthBlurred(
+                                                      lvl3Node.id,
+                                                      3
+                                                    );
+                                                  const lvl3Badge =
+                                                    lvl3Node.badge
+                                                      ? SEMANTIC_BADGE_CONFIG[
+                                                          lvl3Node.badge
+                                                        ]
+                                                      : null;
+                                                  const colonIdx =
+                                                    lvl3Node.label.indexOf(':');
+                                                  const hasKw =
+                                                    colonIdx > 0 &&
+                                                    colonIdx <= 48;
+
+                                                  return (
+                                                    <div key={lvl3Node.id}>
+                                                      <div
+                                                        onMouseEnter={() =>
+                                                          setHoveredNodeId(
+                                                            lvl3Node.id
+                                                          )
+                                                        }
+                                                        onMouseLeave={() =>
+                                                          setHoveredNodeId(null)
+                                                        }
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          if (
+                                                            activeRecallLevel !==
+                                                              'off' &&
+                                                            !revealedNodeIds[
+                                                              lvl3Node.id
+                                                            ]
+                                                          ) {
+                                                            setRevealedNodeIds(
+                                                              (prev) => ({
+                                                                ...prev,
+                                                                [lvl3Node.id]:
+                                                                  true,
+                                                              })
+                                                            );
+                                                          }
+                                                          onSelectNode(
+                                                            lvl3Node.id
+                                                          );
+                                                        }}
+                                                        className={`rounded-lg px-2 py-1 transition-colors cursor-pointer flex items-start gap-2 ${
+                                                          isLvl3Selected
+                                                            ? 'bg-white/15 ring-1 ring-white'
+                                                            : 'hover:bg-white/[0.06]'
+                                                        } ${
+                                                          lvl3Blurred
+                                                            ? 'blur-[5px] opacity-55 select-none'
+                                                            : 'blur-0 opacity-100'
+                                                        }`}
+                                                      >
+                                                        {/* Colored Number Circle ① ② ③ */}
+                                                        <span
+                                                          style={{
+                                                            backgroundColor:
+                                                              colTheme.badgeBg,
+                                                          }}
+                                                          className="w-4 h-4 rounded-full text-[10px] font-mono font-bold text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs"
+                                                        >
+                                                          {l3Idx + 1}
+                                                        </span>
+
+                                                        <div className="min-w-0 flex-1 text-[12px] text-[#f1f5f9] leading-snug">
+                                                          {showBadges &&
+                                                            lvl3Badge && (
+                                                              <span
+                                                                style={{
+                                                                  color:
+                                                                    lvl3Badge.color,
+                                                                  backgroundColor:
+                                                                    lvl3Badge.bgColor,
+                                                                }}
+                                                                className="inline-block mr-1.5 px-1.5 py-0.2 rounded text-[10px] font-semibold"
+                                                              >
+                                                                {lvl3Badge.dot}{' '}
+                                                                {
+                                                                  lvl3Badge.shortLabel
+                                                                }
+                                                              </span>
+                                                            )}
+                                                          {hasKw ? (
+                                                            <>
+                                                              <strong
+                                                                style={{
+                                                                  color:
+                                                                    colTheme.keywordColor,
+                                                                }}
+                                                                className="font-bold"
+                                                              >
+                                                                {lvl3Node.label.slice(
+                                                                  0,
+                                                                  colonIdx + 1
+                                                                )}
+                                                              </strong>
+                                                              <span>
+                                                                {lvl3Node.label.slice(
+                                                                  colonIdx + 1
+                                                                )}
+                                                              </span>
+                                                            </>
+                                                          ) : (
+                                                            <span className="font-medium">
+                                                              {lvl3Node.label}
+                                                            </span>
+                                                          )}
+                                                          {lvl3Node.summary && (
+                                                            <p className="text-[11px] text-[#94a3b8] mt-0.5 leading-snug">
+                                                              {lvl3Node.summary}
+                                                            </p>
+                                                          )}
+                                                        </div>
+                                                      </div>
+
+                                                      {/* Level 4 sub-bullets if any */}
+                                                      {!lvl3Node.collapsed &&
+                                                        lvl3Node.children &&
+                                                        lvl3Node.children
+                                                          .length > 0 && (
+                                                          <div className="pl-6 pr-1 pt-0.5 space-y-0.5">
+                                                            {lvl3Node.children.map(
+                                                              (lvl4) => {
+                                                                const l4Colon =
+                                                                  lvl4.label.indexOf(
+                                                                    ':'
+                                                                  );
+                                                                const l4HasKw =
+                                                                  l4Colon > 0 &&
+                                                                  l4Colon <= 42;
+                                                                return (
+                                                                  <div
+                                                                    key={
+                                                                      lvl4.id
+                                                                    }
+                                                                    onClick={(
+                                                                      e
+                                                                    ) => {
+                                                                      e.stopPropagation();
+                                                                      onSelectNode(
+                                                                        lvl4.id
+                                                                      );
+                                                                    }}
+                                                                    className="text-[11.5px] text-[#cbd5e1] leading-snug hover:text-white cursor-pointer flex items-start gap-1.5 py-0.5"
+                                                                  >
+                                                                    <span
+                                                                      style={{
+                                                                        color:
+                                                                          colTheme.keywordColor,
+                                                                      }}
+                                                                      className="font-bold"
+                                                                    >
+                                                                      •
+                                                                    </span>
+                                                                    <span>
+                                                                      {l4HasKw ? (
+                                                                        <>
+                                                                          <strong
+                                                                            style={{
+                                                                              color:
+                                                                                colTheme.keywordColor,
+                                                                            }}
+                                                                            className="font-semibold"
+                                                                          >
+                                                                            {lvl4.label.slice(
+                                                                              0,
+                                                                              l4Colon +
+                                                                                1
+                                                                            )}
+                                                                          </strong>
+                                                                          {lvl4.label.slice(
+                                                                            l4Colon +
+                                                                              1
+                                                                          )}
+                                                                        </>
+                                                                      ) : (
+                                                                        lvl4.label
+                                                                      )}
+                                                                    </span>
+                                                                  </div>
+                                                                );
+                                                              }
+                                                            )}
+                                                          </div>
+                                                        )}
+                                                    </div>
+                                                  );
+                                                }
+                                              )}
+                                            </div>
+                                          )}
+
+                                          {/* Active Recall Quick Mastery Actions */}
+                                          {activeRecallLevel !== 'off' && (
+                                            <div className="opacity-0 group-hover:opacity-100 absolute -top-2.5 right-4 flex items-center gap-1 bg-[#131314] border border-[#3c4043] rounded-md px-1.5 py-0.5 shadow-lg transition-opacity z-10">
+                                              <button
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  onSetNodeMastery(
+                                                    lvl2Node.id,
+                                                    'mastered'
+                                                  );
+                                                }}
+                                                title="Đánh dấu: Đã nhớ"
+                                                className={`p-0.5 rounded hover:bg-[#10b981]/20 ${
+                                                  lvl2Node.mastery ===
+                                                  'mastered'
+                                                    ? 'text-[#10b981]'
+                                                    : 'text-[#9aa0a6]'
+                                                }`}
+                                              >
+                                                <Check className="w-3 h-3" />
+                                              </button>
+                                              <button
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  onSetNodeMastery(
+                                                    lvl2Node.id,
+                                                    'review'
+                                                  );
+                                                }}
+                                                title="Đánh dấu: Cần ôn lại"
+                                                className={`p-0.5 rounded hover:bg-[#f59e0b]/20 ${
+                                                  lvl2Node.mastery === 'review'
+                                                    ? 'text-[#f59e0b]'
+                                                    : 'text-[#9aa0a6]'
+                                                }`}
+                                              >
+                                                <RotateCcw className="w-3 h-3" />
+                                              </button>
+                                            </div>
+                                          )}
+
+                                          {/* Quick Add Child on Level 2 */}
+                                          {!isReadOnly && (
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                onQuickAddChild(lvl2Node.id);
+                                              }}
+                                              title="Thêm ý Cấp 3"
+                                              className="opacity-0 group-hover:opacity-100 absolute -bottom-2 right-2.5 w-4.5 h-4.5 rounded-full bg-[#131314] hover:bg-white text-white hover:text-[#131314] border border-white/50 flex items-center justify-center transition-all shadow z-10"
+                                            >
+                                              <Plus className="w-2.5 h-2.5" />
+                                            </button>
+                                          )}
+
+                                          {/* Collapse / Expand Level 3 bullets inside Level 2 */}
+                                          {lvl2HasChildren && (
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleNodeToggleCollapse(
+                                                  lvl2Node.id
+                                                );
+                                              }}
+                                              title={
+                                                lvl2Node.collapsed
+                                                  ? `Mở ${lvl2DirectCount} ý chi tiết`
+                                                  : `Thu gọn ${lvl2DirectCount} ý chi tiết`
+                                              }
+                                              className="absolute right-8 -bottom-2.5 h-5 px-1.5 rounded-full bg-[#131314] border border-white/40 text-white flex items-center justify-center gap-0.5 transition-all shadow-md cursor-pointer z-10"
+                                            >
+                                              {lvl2Node.collapsed ? (
+                                                <>
+                                                  <span className="text-[10px] font-mono font-bold text-[#93c5fd] pl-0.5">
+                                                    +{lvl2DirectCount}
+                                                  </span>
+                                                  <ChevronDown className="w-3 h-3" />
+                                                </>
+                                              ) : (
+                                                <ChevronUp className="w-3 h-3" />
+                                              )}
+                                            </button>
+                                          )}
+                                        </div>
+                                      </React.Fragment>
                                     );
                                   })}
                                 </div>

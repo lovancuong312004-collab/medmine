@@ -45,6 +45,8 @@ import { ClinicalDrawer } from './components/ClinicalDrawer';
 import { AIImporterModal } from './components/AIImporterModal';
 import { CloudSyncModal } from './components/CloudSyncModal';
 import { AuthGateModal } from './components/AuthGateModal';
+import { MedicalEssayStudioModal } from './components/MedicalEssayStudioModal';
+import { A4PrintStudioModal } from './components/A4PrintStudioModal';
 
 const STORAGE_KEY_DB = 'medmind_studio_db_v2';
 const STORAGE_KEY_SUPABASE = 'medmind_studio_supabase_v1';
@@ -111,6 +113,8 @@ export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isImporterOpen, setIsImporterOpen] = useState(false);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
+  const [isEssayStudioOpen, setIsEssayStudioOpen] = useState(false);
+  const [isPrintStudioOpen, setIsPrintStudioOpen] = useState(false);
   const [editingLessonTitle, setEditingLessonTitle] = useState(false);
   const [tempTitle, setTempTitle] = useState('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -956,6 +960,8 @@ export default function App() {
           activeRecallLevel={activeRecallLevel}
           onChangeActiveRecall={setActiveRecallLevel}
           onExportCurrentLessonJson={handleExportCurrentLessonJson}
+          onOpenEssayStudio={() => setIsEssayStudioOpen(true)}
+          onOpenPrintStudio={() => setIsPrintStudioOpen(true)}
         />
 
         {/* Toast Feedback Banner */}
@@ -1010,6 +1016,34 @@ export default function App() {
           onUpdateSecuritySettings={handleUpdateSecuritySettings}
           onMergeSampleData={handleMergeSampleData}
           onClose={() => setIsCloudModalOpen(false)}
+        />
+      )}
+
+      {/* MEDICAL ESSAY & RUBRIC STUDIO MODAL (BAREM 0.25đ - 0.5đ) */}
+      {isEssayStudioOpen && (
+        <MedicalEssayStudioModal
+          lessonId={activeLesson.id}
+          lessonTitle={activeLesson.title}
+          rootNode={activeLesson.rootNode}
+          onClose={() => setIsEssayStudioOpen(false)}
+          onSetNodeMastery={handleSetNodeMastery}
+          onOpenPrintStudio={() => {
+            setIsEssayStudioOpen(false);
+            setIsPrintStudioOpen(true);
+          }}
+        />
+      )}
+
+      {/* A4 PRINT & PDF WORKSHEET STUDIO MODAL */}
+      {isPrintStudioOpen && (
+        <A4PrintStudioModal
+          database={database}
+          activeLessonId={activeLesson.id}
+          lessonTitle={activeLesson.title}
+          systemName={activeSystem?.name}
+          subjectName={activeSubject?.name}
+          rootNode={activeLesson.rootNode}
+          onClose={() => setIsPrintStudioOpen(false)}
         />
       )}
     </div>
