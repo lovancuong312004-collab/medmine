@@ -1,0 +1,6 @@
+{
+  "summary":  "Kế hoạch triển khai cập nhật cho MedMind Studio với Hệ thống Phân cấp Thị giác 5 tầng (Cấp 0 -> Cấp 4+), Nhãn phân loại Y khoa (Semantic Medical Badges), Bộ lọc Cấp độ nhanh (Level Filter Bar), Quản lý Học phần 3 tầng trên Sidebar, AI Importer 3 Tab, Chế độ Ôn thi theo Cấp độ và Dữ liệu mẫu 4 cấp độ sâu.",
+  "updatedAt":  "2026-10-24T16:00:48.173614333Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

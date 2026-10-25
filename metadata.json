@@ -1,0 +1,6 @@
+{
+  "name": "MedMind Studio",
+  "description": "Hệ thống lưu trữ và hiển thị Sơ đồ tư duy Y khoa phân cấp chuẩn Google NotebookLM với AI-Ready Importer, Active Recall và đồng bộ đám mây.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
