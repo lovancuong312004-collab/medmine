@@ -2,13 +2,14 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   Sparkles,
   BookOpen,
-  RotateCcw,
   CheckCircle2,
   Edit2,
   Check,
   Lock,
   Cloud,
   RefreshCw,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import {
   MedMindDatabase,
@@ -51,6 +52,7 @@ import { A4PrintStudioModal } from './components/A4PrintStudioModal';
 const STORAGE_KEY_DB = 'medmind_studio_db_v2';
 const STORAGE_KEY_SUPABASE = 'medmind_studio_supabase_v1';
 const STORAGE_KEY_AUTH_REMEMBER = 'medmind_studio_auth_session_v1';
+const STORAGE_KEY_THEME = 'medmind_studio_theme_v1';
 
 interface SavedAuthSession {
   role: AuthRole;
@@ -75,6 +77,19 @@ export default function App() {
     return INITIAL_MEDMIND_DATA;
   });
 
+  // Load Theme Mode ('dark' | 'light') persisted in LocalStorage
+  const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() => {
+    try {
+      const savedTheme = localStorage.getItem(STORAGE_KEY_THEME);
+      if (savedTheme === 'light' || savedTheme === 'dark') {
+        return savedTheme;
+      }
+    } catch {
+      // ignore
+    }
+    return 'dark';
+  });
+
   // Load effective Supabase Config (merges DEFAULT_SUPABASE_URL & KEY with LocalStorage)
   const [supabaseConfig, setSupabaseConfig] = useState<SupabaseConfig>(() => {
     try {
@@ -88,7 +103,7 @@ export default function App() {
     return getEffectiveSupabaseConfig(null);
   });
 
-  // Load remembered authentication session from LocalStorage so user doesn't have to re-login every time
+  // Load remembered authentication session from LocalStorage
   const [authRole, setAuthRole] = useState<AuthRole>(() => {
     try {
       const savedAuthRaw = localStorage.getItem(STORAGE_KEY_AUTH_REMEMBER);
@@ -111,6 +126,7 @@ export default function App() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>('cancer-root');
   const [activeRecallLevel, setActiveRecallLevel] = useState<ActiveRecallLevel>('off');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isZenMode, setIsZenMode] = useState(false);
   const [isImporterOpen, setIsImporterOpen] = useState(false);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
   const [isEssayStudioOpen, setIsEssayStudioOpen] = useState(false);
@@ -131,6 +147,21 @@ export default function App() {
       ? database.security.allowGuestMode
       : true;
 
+  // Sync themeMode to localStorage & document root class
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_THEME, themeMode);
+    } catch {
+      // ignore
+    }
+    const rootEl = document.documentElement;
+    if (themeMode === 'light') {
+      rootEl.classList.add('theme-light');
+    } else {
+      rootEl.classList.remove('theme-light');
+    }
+  }, [themeMode]);
+
   // Save database to LocalStorage automatically
   useEffect(() => {
     try {
@@ -146,6 +177,58 @@ export default function App() {
       setToastMessage((prev) => (prev === msg ? null : prev));
     }, 3200);
   }, []);
+
+  // Keyboard shortcut 'Z' for Zen Study Mode (Học Full Sạch Sẽ)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        isImporterOpen ||
+        isCloudModalOpen ||
+        isEssayStudioOpen ||
+        isPrintStudioOpen ||
+        editingLessonTitle
+      ) {
+        return;
+      }
+
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if ((e.key === 'z' || e.key === 'Z') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        setIsZenMode((prev) => {
+          const next = !prev;
+          showToast(
+            next
+              ? '⛶ Đã bật Chế độ Học Full Sạch Sẽ (Bấm phím Z để thoát)'
+              : 'Đã thoát Chế độ Học Full Màn Hình'
+          );
+          return next;
+        });
+      } else if (e.key === 'Escape' && isZenMode) {
+        setIsZenMode(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    isImporterOpen,
+    isCloudModalOpen,
+    isEssayStudioOpen,
+    isPrintStudioOpen,
+    editingLessonTitle,
+    isZenMode,
+    showToast,
+  ]);
 
   /**
    * Background Auto-Push helper for Owner actions when Supabase Auto-Sync is enabled
@@ -174,7 +257,7 @@ export default function App() {
   );
 
   /**
-   * Auto-Pull from Supabase on initial app mount (fetches latest lessons & synced owner password)
+   * Auto-Pull from Supabase on initial app mount
    */
   useEffect(() => {
     if (!isSupabaseConfigured(supabaseConfig)) return;
@@ -191,13 +274,11 @@ export default function App() {
         setDatabase(res.database);
         setCloudSyncStatus('synced');
 
-        // Keep active lesson valid
         setActiveLessonId((prevId) => {
           const exists = res.database!.lessons.some((l) => l.id === prevId);
           return exists ? prevId : res.database!.lessons[0]?.id || prevId;
         });
 
-        // Verify if remembered owner password still matches cloud security password
         try {
           const savedAuthRaw = localStorage.getItem(STORAGE_KEY_AUTH_REMEMBER);
           if (savedAuthRaw) {
@@ -227,7 +308,7 @@ export default function App() {
   }, []);
 
   /**
-   * Owner Login Handler: Saves remembered session if checked + automatically pulls latest data from Supabase
+   * Owner Login Handler
    */
   const handleOwnerLoginSuccess = async (
     rememberDevice: boolean,
@@ -340,7 +421,6 @@ export default function App() {
   };
 
   const handleToggleCollapseNode = (nodeId: string) => {
-    // Allow expanding/collapsing for both Owner and Guest (don't need to push collapse UI state to cloud)
     updateActiveRootNode((root) => toggleNodeCollapseById(root, nodeId), false);
   };
 
@@ -395,7 +475,7 @@ export default function App() {
     showToast('Đã xóa nhánh khỏi sơ đồ tư duy.');
   };
 
-  // Curriculum management handlers (Create, Rename, Delete for Systems, Subjects, and Lessons)
+  // Curriculum management handlers
   const handleCreateSystem = (name: string) => {
     if (isReadOnly) return;
     const newSysId = `sys-${Date.now()}`;
@@ -636,7 +716,6 @@ export default function App() {
       return nextDb;
     });
 
-    // Update remembered token password if owner is currently remembered
     try {
       const savedAuthRaw = localStorage.getItem(STORAGE_KEY_AUTH_REMEMBER);
       if (savedAuthRaw) {
@@ -711,10 +790,6 @@ export default function App() {
     reader.readAsText(file);
   };
 
-  /**
-   * Safe Non-Destructive Sample Merge:
-   * Only adds missing sample systems/subjects/lessons without EVER deleting or overwriting user-created data!
-   */
   const handleMergeSampleData = () => {
     if (isReadOnly) return;
     setDatabase((prev) => {
@@ -772,186 +847,238 @@ export default function App() {
   }
 
   return (
-    <div className="w-screen h-screen bg-[#131314] text-[#e3e3e3] flex overflow-hidden">
-      {/* LEFT 3-TIER MEDICAL SIDEBAR */}
-      <SidebarCurriculum
-        database={database}
-        activeLessonId={activeLesson.id}
-        isReadOnly={isReadOnly}
-        onSelectLesson={(id) => {
-          setActiveLessonId(id);
-          const found = database.lessons.find((l) => l.id === id);
-          if (found) setSelectedNodeId(found.rootNode.id);
-        }}
-        onCreateSystem={handleCreateSystem}
-        onRenameSystem={handleRenameSystem}
-        onDeleteSystem={handleDeleteSystem}
-        onCreateSubject={handleCreateSubject}
-        onRenameSubject={handleRenameSubject}
-        onDeleteSubject={handleDeleteSubject}
-        onRenameLesson={handleRenameLesson}
-        onDeleteLesson={handleDeleteLesson}
-        onUpdateLessonStatus={handleUpdateLessonStatus}
-        onOpenImporter={() => !isReadOnly && setIsImporterOpen(true)}
-        onOpenCloudModal={() => setIsCloudModalOpen(true)}
-        onExportDatabaseJson={handleExportDatabaseJson}
-        onImportDatabaseJson={handleImportDatabaseJson}
-        isCollapsed={isSidebarCollapsed}
-        onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-        cloudConnected={isSupabaseConfigured(supabaseConfig)}
-      />
+    <div
+      data-theme={themeMode}
+      className={`w-screen h-screen bg-[#131314] text-[#e3e3e3] flex overflow-hidden ${
+        themeMode === 'light' ? 'theme-light' : ''
+      }`}
+    >
+      {/* LEFT 3-TIER MEDICAL SIDEBAR (Hidden when Zen Study Mode is active) */}
+      {!isZenMode && (
+        <SidebarCurriculum
+          database={database}
+          activeLessonId={activeLesson.id}
+          isReadOnly={isReadOnly}
+          onSelectLesson={(id) => {
+            setActiveLessonId(id);
+            const found = database.lessons.find((l) => l.id === id);
+            if (found) setSelectedNodeId(found.rootNode.id);
+          }}
+          onCreateSystem={handleCreateSystem}
+          onRenameSystem={handleRenameSystem}
+          onDeleteSystem={handleDeleteSystem}
+          onCreateSubject={handleCreateSubject}
+          onRenameSubject={handleRenameSubject}
+          onDeleteSubject={handleDeleteSubject}
+          onRenameLesson={handleRenameLesson}
+          onDeleteLesson={handleDeleteLesson}
+          onUpdateLessonStatus={handleUpdateLessonStatus}
+          onOpenImporter={() => !isReadOnly && setIsImporterOpen(true)}
+          onOpenCloudModal={() => setIsCloudModalOpen(true)}
+          onExportDatabaseJson={handleExportDatabaseJson}
+          onImportDatabaseJson={handleImportDatabaseJson}
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+          cloudConnected={isSupabaseConfigured(supabaseConfig)}
+        />
+      )}
 
       {/* CENTER WORKSPACE COLUMN */}
       <div className="flex-1 h-full flex flex-col min-w-0 relative">
-        {/* Top Context Header (Strict Non-Overlapping Flexbox Contract) */}
-        <header className="h-14 px-4 bg-[#1e1f20] border-b border-[#2d2e30] flex items-center justify-between gap-3 overflow-hidden shrink-0 z-20">
-          {/* Zone 1: 3-Tier Curriculum Path & Editable Lesson Title */}
-          <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-            <span
-              title={`${activeSystem?.name || ''} / ${activeSubject?.name || ''}`}
-              className="text-[12px] text-[#9aa0a6] truncate max-w-[180px] xl:max-w-[260px] shrink hidden md:inline"
-            >
-              {activeSystem?.name} / {activeSubject?.name} /
-            </span>
-
-            {editingLessonTitle && !isReadOnly ? (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (tempTitle.trim()) {
-                    handleRenameLesson(activeLesson.id, tempTitle.trim());
-                  }
-                  setEditingLessonTitle(false);
-                }}
-                className="flex items-center gap-1.5 min-w-0"
+        {/* Top Context Header (Hidden when Zen Study Mode is active) */}
+        {!isZenMode && (
+          <header className="h-14 px-4 bg-[#1e1f20] border-b border-[#2d2e30] flex items-center justify-between gap-3 overflow-hidden shrink-0 z-20">
+            {/* Zone 1: 3-Tier Curriculum Path & Editable Lesson Title */}
+            <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+              <span
+                title={`${activeSystem?.name || ''} / ${activeSubject?.name || ''}`}
+                className="text-[12px] text-[#9aa0a6] truncate max-w-[180px] xl:max-w-[260px] shrink hidden md:inline"
               >
-                <input
-                  type="text"
-                  autoFocus
-                  value={tempTitle}
-                  onChange={(e) => setTempTitle(e.target.value)}
-                  className="bg-[#131314] border border-[#8ab4f8] rounded px-2.5 py-1 text-[14px] font-display font-semibold text-white focus:outline-none w-56 max-w-full"
-                />
-                <button
-                  type="submit"
-                  className="p-1 rounded bg-[#8ab4f8] text-[#131314] shrink-0"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                </button>
-              </form>
-            ) : (
-              <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
-                <h2
-                  title={activeLesson.title}
-                  className="font-display font-bold text-[14.5px] text-white truncate"
-                >
-                  {activeLesson.title}
-                </h2>
-                {!isReadOnly && (
-                  <button
-                    onClick={() => {
-                      setTempTitle(activeLesson.title);
-                      setEditingLessonTitle(true);
-                    }}
-                    title="Đổi tên bài học"
-                    className="p-1 rounded hover:bg-[#2d2e30] text-[#9aa0a6] hover:text-white transition-colors shrink-0 cursor-pointer"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Zone 2: Clean Unboxed Mastery & Cloud Sync Status (Never Overlaps, No Dangerous Reset Button) */}
-          <div className="hidden lg:flex items-center gap-2 text-[12px] text-[#9aa0a6] whitespace-nowrap shrink-0">
-            <span className="flex items-center gap-1 text-[#10b981] font-mono">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              {masteryStats.mastered}/{masteryStats.total} thuộc ({masteryStats.percent}%)
-            </span>
-            <span aria-hidden="true">·</span>
-            <span className="font-mono text-[#f59e0b]">
-              {masteryStats.review} cần ôn
-            </span>
-            <span aria-hidden="true">·</span>
-            {/* Cloud Status Text */}
-            <button
-              onClick={() => setIsCloudModalOpen(true)}
-              className="flex items-center gap-1 hover:text-white transition-colors cursor-pointer"
-            >
-              {cloudSyncStatus === 'syncing' ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 text-[#8ab4f8] animate-spin" />
-                  <span className="text-[#8ab4f8]">Đang đồng bộ Cloud...</span>
-                </>
-              ) : cloudSyncStatus === 'synced' && isSupabaseConfigured(supabaseConfig) ? (
-                <>
-                  <Cloud className="w-3.5 h-3.5 text-[#10b981]" />
-                  <span className="text-[#10b981]">Đã đồng bộ Cloud</span>
-                </>
-              ) : (
-                <>
-                  <Cloud className="w-3.5 h-3.5 text-[#9aa0a6]" />
-                  <span>Lưu cục bộ (Local)</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Zone 3: Primary Actions + Lock / Logout Button */}
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() =>
-                setSelectedNodeId(
-                  selectedNodeId ? null : activeLesson.rootNode.id
-                )
-              }
-              className={`px-3 py-1.5 rounded-lg text-[12px] font-medium border flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
-                selectedNodeId
-                  ? 'bg-[#2d2e30] border-[#8ab4f8]/50 text-white'
-                  : 'bg-[#131314] border-[#2d2e30] text-[#9aa0a6] hover:text-white'
-              }`}
-            >
-              <BookOpen className="w-3.5 h-3.5 text-[#8ab4f8]" />
-              <span>Bảng Lâm sàng</span>
-            </button>
-
-            {!isReadOnly && (
-              <button
-                onClick={() => setIsImporterOpen(true)}
-                className="px-3.5 py-1.5 rounded-lg bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#131314] font-display font-semibold text-[12.5px] flex items-center gap-1.5 shadow-sm transition-colors whitespace-nowrap cursor-pointer"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>+ Nhập bài học từ AI</span>
-              </button>
-            )}
-
-            <button
-              onClick={handleLogout}
-              title={
-                isReadOnly
-                  ? 'Đang ở chế độ Khách · Bấm để chuyển sang Đăng nhập Chủ sở hữu'
-                  : 'Khóa màn hình / Đăng xuất'
-              }
-              className={`px-2.5 py-1.5 rounded-lg border text-[12px] font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
-                isReadOnly
-                  ? 'bg-[#f59e0b]/15 border-[#f59e0b]/40 text-[#fdd663] hover:bg-[#f59e0b]/25'
-                  : 'bg-[#131314] border-[#2d2e30] text-[#9aa0a6] hover:text-white hover:bg-[#2d2e30]'
-              }`}
-            >
-              <Lock className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">
-                {isReadOnly ? 'Khách (Đăng nhập)' : 'Khóa'}
+                {activeSystem?.name} / {activeSubject?.name} /
               </span>
-            </button>
-          </div>
-        </header>
 
-        {/* Interactive Horizontal / Vertical / Bento Mindmap Canvas */}
+              {editingLessonTitle && !isReadOnly ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (tempTitle.trim()) {
+                      handleRenameLesson(activeLesson.id, tempTitle.trim());
+                    }
+                    setEditingLessonTitle(false);
+                  }}
+                  className="flex items-center gap-1.5 min-w-0"
+                >
+                  <input
+                    type="text"
+                    autoFocus
+                    value={tempTitle}
+                    onChange={(e) => setTempTitle(e.target.value)}
+                    className="bg-[#131314] border border-[#8ab4f8] rounded px-2.5 py-1 text-[14px] font-display font-semibold text-white focus:outline-none w-56 max-w-full"
+                  />
+                  <button
+                    type="submit"
+                    className="p-1 rounded bg-[#8ab4f8] text-[#131314] shrink-0"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                  </button>
+                </form>
+              ) : (
+                <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+                  <h2
+                    title={activeLesson.title}
+                    className="font-display font-bold text-[14.5px] text-white truncate"
+                  >
+                    {activeLesson.title}
+                  </h2>
+                  {!isReadOnly && (
+                    <button
+                      onClick={() => {
+                        setTempTitle(activeLesson.title);
+                        setEditingLessonTitle(true);
+                      }}
+                      title="Đổi tên bài học"
+                      className="p-1 rounded hover:bg-[#2d2e30] text-[#9aa0a6] hover:text-white transition-colors shrink-0 cursor-pointer"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Zone 2: Clean Unboxed Mastery & Cloud Sync Status */}
+            <div className="hidden lg:flex items-center gap-2 text-[12px] text-[#9aa0a6] whitespace-nowrap shrink-0">
+              <span className="flex items-center gap-1 text-[#10b981] font-mono">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                {masteryStats.mastered}/{masteryStats.total} thuộc ({masteryStats.percent}%)
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono text-[#f59e0b]">
+                {masteryStats.review} cần ôn
+              </span>
+              <span aria-hidden="true">·</span>
+              <button
+                onClick={() => setIsCloudModalOpen(true)}
+                className="flex items-center gap-1 hover:text-white transition-colors cursor-pointer"
+              >
+                {cloudSyncStatus === 'syncing' ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 text-[#8ab4f8] animate-spin" />
+                    <span className="text-[#8ab4f8]">Đang đồng bộ Cloud...</span>
+                  </>
+                ) : cloudSyncStatus === 'synced' && isSupabaseConfigured(supabaseConfig) ? (
+                  <>
+                    <Cloud className="w-3.5 h-3.5 text-[#10b981]" />
+                    <span className="text-[#10b981]">Đã đồng bộ Cloud</span>
+                  </>
+                ) : (
+                  <>
+                    <Cloud className="w-3.5 h-3.5 text-[#9aa0a6]" />
+                    <span>Lưu cục bộ (Local)</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Zone 3: Quick Theme Toggle + Primary Actions + Lock / Logout Button */}
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Quick Light / Dark Theme Switcher Button */}
+              <button
+                onClick={() => {
+                  const next = themeMode === 'dark' ? 'light' : 'dark';
+                  setThemeMode(next);
+                  showToast(
+                    next === 'light'
+                      ? '☀️ Đã chuyển sang Chế độ Sáng (Medical Paper Light - Chuẩn Sách Y Khoa)'
+                      : '🌙 Đã chuyển sang Chế độ Tối (Dark Studio #131314)'
+                  );
+                }}
+                title={
+                  themeMode === 'dark'
+                    ? 'Chuyển sang ☀️ Chế độ Sáng (Medical Paper Light)'
+                    : 'Chuyển sang 🌙 Chế độ Tối (Dark Studio)'
+                }
+                className="px-2.5 py-1.5 rounded-lg border border-[#2d2e30] bg-[#131314] hover:bg-[#2d2e30] text-[12px] font-display font-semibold text-white flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer"
+              >
+                {themeMode === 'light' ? (
+                  <>
+                    <Sun className="w-3.5 h-3.5 text-[#f59e0b]" />
+                    <span>☀️ Sáng</span>
+                  </>
+                ) : (
+                  <>
+                    <Moon className="w-3.5 h-3.5 text-[#8ab4f8]" />
+                    <span>🌙 Tối</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() =>
+                  setSelectedNodeId(
+                    selectedNodeId ? null : activeLesson.rootNode.id
+                  )
+                }
+                className={`px-3 py-1.5 rounded-lg text-[12px] font-medium border flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
+                  selectedNodeId
+                    ? 'bg-[#2d2e30] border-[#8ab4f8]/50 text-white'
+                    : 'bg-[#131314] border-[#2d2e30] text-[#9aa0a6] hover:text-white'
+                }`}
+              >
+                <BookOpen className="w-3.5 h-3.5 text-[#8ab4f8]" />
+                <span>Bảng Lâm sàng</span>
+              </button>
+
+              {!isReadOnly && (
+                <button
+                  onClick={() => setIsImporterOpen(true)}
+                  className="px-3.5 py-1.5 rounded-lg bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#131314] font-display font-semibold text-[12.5px] flex items-center gap-1.5 shadow-sm transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>+ Nhập bài học từ AI</span>
+                </button>
+              )}
+
+              <button
+                onClick={handleLogout}
+                title={
+                  isReadOnly
+                    ? 'Đang ở chế độ Khách · Bấm để chuyển sang Đăng nhập Chủ sở hữu'
+                    : 'Khóa màn hình / Đăng xuất'
+                }
+                className={`px-2.5 py-1.5 rounded-lg border text-[12px] font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
+                  isReadOnly
+                    ? 'bg-[#f59e0b]/15 border-[#f59e0b]/40 text-[#fdd663] hover:bg-[#f59e0b]/25'
+                    : 'bg-[#131314] border-[#2d2e30] text-[#9aa0a6] hover:text-white hover:bg-[#2d2e30]'
+                }`}
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">
+                  {isReadOnly ? 'Khách (Đăng nhập)' : 'Khóa'}
+                </span>
+              </button>
+            </div>
+          </header>
+        )}
+
+        {/* Interactive 6-Mode Mindmap Canvas with Fixed h-11 Sub-Header & Zen Mode */}
         <MindmapCanvas
           rootNode={activeLesson.rootNode}
           selectedNodeId={selectedNodeId}
           isReadOnly={isReadOnly}
+          themeMode={themeMode}
+          isZenMode={isZenMode}
+          onToggleZenMode={() => {
+            setIsZenMode((prev) => {
+              const next = !prev;
+              showToast(
+                next
+                  ? '⛶ Đã bật Chế độ Học Full Sạch Sẽ (Bấm phím Z để thoát)'
+                  : 'Đã thoát Chế độ Học Full Màn Hình'
+              );
+              return next;
+            });
+          }}
           onSelectNode={(nodeId) => setSelectedNodeId(nodeId)}
           onToggleCollapse={handleToggleCollapseNode}
           onQuickAddChild={handleQuickAddChild}
@@ -973,7 +1100,7 @@ export default function App() {
       </div>
 
       {/* RIGHT MEDICAL CLINICAL DRAWER */}
-      {selectedNodeContext && (
+      {selectedNodeContext && !isZenMode && (
         <ClinicalDrawer
           node={selectedNodeContext.node}
           depth={selectedNodeContext.depth}
@@ -999,12 +1126,16 @@ export default function App() {
         />
       )}
 
-      {/* SUPABASE CLOUD SYNC & SECURITY MODAL */}
+      {/* SUPABASE CLOUD SYNC, THEME & SECURITY MODAL */}
       {isCloudModalOpen && (
         <CloudSyncModal
           config={supabaseConfig}
           database={database}
           isReadOnly={isReadOnly}
+          themeMode={themeMode}
+          onChangeThemeMode={(newTheme) => {
+            setThemeMode(newTheme);
+          }}
           onSaveConfig={handleSaveSupabaseConfig}
           onReplaceDatabase={(newDb) => {
             setDatabase(newDb);

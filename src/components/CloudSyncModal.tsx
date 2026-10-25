@@ -13,6 +13,8 @@ import {
   Shield,
   Users,
   RefreshCw,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import {
   SupabaseConfig,
@@ -30,6 +32,8 @@ interface CloudSyncModalProps {
   config: SupabaseConfig;
   database: MedMindDatabase;
   isReadOnly: boolean;
+  themeMode: 'dark' | 'light';
+  onChangeThemeMode: (mode: 'dark' | 'light') => void;
   onSaveConfig: (newConfig: SupabaseConfig) => void;
   onReplaceDatabase: (newDb: MedMindDatabase) => void;
   onUpdateSecuritySettings: (newSecurity: SecuritySettings) => void;
@@ -55,13 +59,15 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   config,
   database,
   isReadOnly,
+  themeMode,
+  onChangeThemeMode,
   onSaveConfig,
   onReplaceDatabase,
   onUpdateSecuritySettings,
   onMergeSampleData,
   onClose,
 }) => {
-  const [activeTab, setActiveTab] = useState<'cloud' | 'security'>('cloud');
+  const [activeTab, setActiveTab] = useState<'theme' | 'cloud' | 'security'>('theme');
   const [url, setUrl] = useState(config.url);
   const [anonKey, setAnonKey] = useState(config.anonKey);
   const [tableName, setTableName] = useState(config.tableName || 'medmind_store');
@@ -115,7 +121,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     };
 
     setIsSyncing(true);
-    setStatusMsg({ type: 'info', text: 'Đang đẩy dữ liệu & mật khẩu bảo mật lên Supabase Cloud...' });
+    setStatusMsg({
+      type: 'info',
+      text: 'Đang đẩy dữ liệu & mật khẩu bảo mật lên Supabase Cloud...',
+    });
 
     const res = await pushDatabaseToSupabase(tempConfig, database);
     setIsSyncing(false);
@@ -148,7 +157,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     };
 
     setIsSyncing(true);
-    setStatusMsg({ type: 'info', text: 'Đang tải kho bài học mới nhất từ Supabase Cloud...' });
+    setStatusMsg({
+      type: 'info',
+      text: 'Đang tải kho bài học mới nhất từ Supabase Cloud...',
+    });
 
     const res = await pullDatabaseFromSupabase(tempConfig);
     setIsSyncing(false);
@@ -197,7 +209,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 select-text">
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 select-text">
       <div className="w-full max-w-2xl bg-[#1e1f20] border border-[#3c4043] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="px-6 py-4 border-b border-[#2d2e30] flex items-center justify-between bg-[#161718]">
@@ -207,10 +219,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             </div>
             <div>
               <h2 className="font-display font-bold text-[16px] text-white">
-                Đồng bộ Đám mây Supabase & Bảo mật Truy cập
+                Cài đặt Giao diện Sáng / Tối, Đồng bộ Cloud & Bảo mật
               </h2>
               <p className="text-[12px] text-[#9aa0a6]">
-                Tự động đồng bộ đa thiết bị (Laptop, iPad, Điện thoại) và quản lý mật khẩu Chủ sở hữu
+                Tùy chỉnh giao diện chuẩn sách y khoa, tự động đồng bộ đa thiết bị và quản lý mật khẩu
               </p>
             </div>
           </div>
@@ -224,20 +236,39 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="px-6 pt-3 border-b border-[#2d2e30] flex items-center gap-2 bg-[#1b1c1e]">
+        <div className="px-6 pt-3 border-b border-[#2d2e30] flex items-center gap-2 bg-[#1b1c1e] overflow-x-auto no-scrollbar">
+          <button
+            onClick={() => {
+              setActiveTab('theme');
+              setStatusMsg(null);
+            }}
+            className={`px-3.5 py-2.5 text-[12.5px] font-display font-semibold rounded-t-xl border-b-2 flex items-center gap-2 transition-colors whitespace-nowrap cursor-pointer ${
+              activeTab === 'theme'
+                ? 'border-[#f59e0b] text-[#f59e0b] bg-[#131314]/60'
+                : 'border-transparent text-[#9aa0a6] hover:text-white'
+            }`}
+          >
+            {themeMode === 'light' ? (
+              <Sun className="w-4 h-4 text-[#f59e0b]" />
+            ) : (
+              <Moon className="w-4 h-4 text-[#8ab4f8]" />
+            )}
+            <span>1. Giao diện Sáng / Tối (Theme)</span>
+          </button>
+
           <button
             onClick={() => {
               setActiveTab('cloud');
               setStatusMsg(null);
             }}
-            className={`px-4 py-2.5 text-[13px] font-display font-semibold rounded-t-xl border-b-2 flex items-center gap-2 transition-colors cursor-pointer ${
+            className={`px-3.5 py-2.5 text-[12.5px] font-display font-semibold rounded-t-xl border-b-2 flex items-center gap-2 transition-colors whitespace-nowrap cursor-pointer ${
               activeTab === 'cloud'
                 ? 'border-[#8ab4f8] text-[#8ab4f8] bg-[#131314]/60'
                 : 'border-transparent text-[#9aa0a6] hover:text-white'
             }`}
           >
             <Cloud className="w-4 h-4" />
-            <span>1. Tự động Đồng bộ Supabase (Auto-Sync)</span>
+            <span>2. Đồng bộ Supabase (Auto-Sync)</span>
           </button>
 
           <button
@@ -245,14 +276,14 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               setActiveTab('security');
               setStatusMsg(null);
             }}
-            className={`px-4 py-2.5 text-[13px] font-display font-semibold rounded-t-xl border-b-2 flex items-center gap-2 transition-colors cursor-pointer ${
+            className={`px-3.5 py-2.5 text-[12.5px] font-display font-semibold rounded-t-xl border-b-2 flex items-center gap-2 transition-colors whitespace-nowrap cursor-pointer ${
               activeTab === 'security'
                 ? 'border-[#81c995] text-[#81c995] bg-[#131314]/60'
                 : 'border-transparent text-[#9aa0a6] hover:text-white'
             }`}
           >
             <Shield className="w-4 h-4" />
-            <span>2. Bảo mật & Mật khẩu Chủ sở hữu</span>
+            <span>3. Bảo mật & Mật khẩu</span>
           </button>
         </div>
 
@@ -277,7 +308,186 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             </div>
           )}
 
-          {activeTab === 'cloud' ? (
+          {activeTab === 'theme' ? (
+            /* TAB 1: THEME SYSTEM (MEDICAL PAPER LIGHT vs DARK STUDIO) */
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                {/* Option 1: Medical Paper Light */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChangeThemeMode('light');
+                    setStatusMsg({
+                      type: 'success',
+                      text: 'Đã chuyển sang ☀️ Chế độ Sáng (Medical Paper Light - Chuẩn Sách Y Khoa) đồng bộ 100%!',
+                    });
+                  }}
+                  style={{
+                    backgroundColor: '#ffffff',
+                    borderColor: themeMode === 'light' ? '#2563eb' : '#cbd5e1',
+                    borderWidth: themeMode === 'light' ? '2.5px' : '1.5px',
+                  }}
+                  className="p-4 rounded-2xl text-left transition-all shadow-md hover:shadow-lg cursor-pointer flex flex-col justify-between gap-3"
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span
+                        style={{ color: '#0f172a' }}
+                        className="font-display font-bold text-[14.5px] flex items-center gap-2"
+                      >
+                        <Sun className="w-4.5 h-4.5 text-[#f59e0b]" />
+                        <span>☀️ Chế độ Sáng (Medical Paper Light)</span>
+                      </span>
+                      {themeMode === 'light' && (
+                        <span
+                          data-keep-white="true"
+                          style={{ backgroundColor: '#2563eb', color: '#ffffff' }}
+                          className="px-2 py-0.5 rounded-full text-[10.5px] font-bold"
+                        >
+                          Đang bật
+                        </span>
+                      )}
+                    </div>
+                    <p
+                      style={{ color: '#475569' }}
+                      className="text-[12px] leading-relaxed"
+                    >
+                      Chuẩn sách giáo trình Y khoa: Nền giấy trắng ngà chống mỏi mắt (<code>#f8fafc</code>), các hộp kiến thức pastel sáng rõ, chữ đen đậm (<code>#0f172a</code>) sắc nét tuyệt đối.
+                    </p>
+                  </div>
+
+                  {/* Mini Preview Swatches */}
+                  <div className="flex items-center gap-1.5 pt-2 border-t border-slate-200">
+                    <span
+                      style={{
+                        backgroundColor: '#eff6ff',
+                        borderColor: '#3b82f6',
+                        color: '#1e3a8a',
+                      }}
+                      className="px-2 py-0.5 rounded border text-[10.5px] font-semibold"
+                    >
+                      Nhánh 1
+                    </span>
+                    <span
+                      style={{
+                        backgroundColor: '#f0fdf4',
+                        borderColor: '#22c55e',
+                        color: '#14532d',
+                      }}
+                      className="px-2 py-0.5 rounded border text-[10.5px] font-semibold"
+                    >
+                      Nhánh 2
+                    </span>
+                    <span
+                      style={{
+                        backgroundColor: '#fff7ed',
+                        borderColor: '#f97316',
+                        color: '#7c2d12',
+                      }}
+                      className="px-2 py-0.5 rounded border text-[10.5px] font-semibold"
+                    >
+                      Nhánh 3
+                    </span>
+                  </div>
+                </button>
+
+                {/* Option 2: Dark Studio */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChangeThemeMode('dark');
+                    setStatusMsg({
+                      type: 'success',
+                      text: 'Đã chuyển sang 🌙 Chế độ Tối (Dark Studio #131314) dịu mắt ban đêm!',
+                    });
+                  }}
+                  style={{
+                    backgroundColor: '#131314',
+                    borderColor: themeMode === 'dark' ? '#8ab4f8' : '#3c4043',
+                    borderWidth: themeMode === 'dark' ? '2.5px' : '1.5px',
+                  }}
+                  className="p-4 rounded-2xl text-left transition-all shadow-md hover:shadow-lg cursor-pointer flex flex-col justify-between gap-3"
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span
+                        data-keep-white="true"
+                        style={{ color: '#ffffff' }}
+                        className="font-display font-bold text-[14.5px] flex items-center gap-2"
+                      >
+                        <Moon className="w-4.5 h-4.5 text-[#8ab4f8]" />
+                        <span>🌙 Chế độ Tối (Dark Studio)</span>
+                      </span>
+                      {themeMode === 'dark' && (
+                        <span
+                          style={{ backgroundColor: '#8ab4f8', color: '#131314' }}
+                          className="px-2 py-0.5 rounded-full text-[10.5px] font-bold"
+                        >
+                          Đang bật
+                        </span>
+                      )}
+                    </div>
+                    <p
+                      data-keep-white="true"
+                      style={{ color: '#9aa0a6' }}
+                      className="text-[12px] leading-relaxed"
+                    >
+                      Phong cách Google NotebookLM Dark Studio (<code>#131314</code>): Tối ưu khi ôn thi ban đêm, độ tương phản dịu mắt và nổi bật nhánh màu.
+                    </p>
+                  </div>
+
+                  {/* Mini Preview Swatches */}
+                  <div className="flex items-center gap-1.5 pt-2 border-t border-[#2d2e30]">
+                    <span
+                      data-keep-white="true"
+                      style={{
+                        backgroundColor: '#162033',
+                        borderColor: '#3b82f6',
+                        color: '#93c5fd',
+                      }}
+                      className="px-2 py-0.5 rounded border text-[10.5px] font-semibold"
+                    >
+                      Nhánh 1
+                    </span>
+                    <span
+                      data-keep-white="true"
+                      style={{
+                        backgroundColor: '#13251e',
+                        borderColor: '#22c55e',
+                        color: '#86efac',
+                      }}
+                      className="px-2 py-0.5 rounded border text-[10.5px] font-semibold"
+                    >
+                      Nhánh 2
+                    </span>
+                    <span
+                      data-keep-white="true"
+                      style={{
+                        backgroundColor: '#271a14',
+                        borderColor: '#f97316',
+                        color: '#fdba74',
+                      }}
+                      className="px-2 py-0.5 rounded border text-[10.5px] font-semibold"
+                    >
+                      Nhánh 3
+                    </span>
+                  </div>
+                </button>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#131314] border border-[#2d2e30] text-[12px] text-[#9aa0a6] space-y-1">
+                <p className="font-semibold text-white">
+                  💡 Mẹo học tập nhanh:
+                </p>
+                <p>
+                  • Bạn có thể chuyển nhanh <strong>☀️ Sáng / 🌙 Tối</strong> ngay trên góc phải thanh Header bất cứ lúc nào.
+                </p>
+                <p>
+                  • Bấm nút <strong>⛶ Học Full (Phím tắt Z)</strong> trên thanh công cụ để ẩn toàn bộ thanh bên và tiêu đề, dành 100% màn hình cho sơ đồ y khoa.
+                </p>
+              </div>
+            </div>
+          ) : activeTab === 'cloud' ? (
             <>
               <div className="grid grid-cols-1 gap-3">
                 <div>
@@ -411,7 +621,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               </div>
             </>
           ) : (
-            /* TAB 2: SECURITY & OWNER PASSWORD SETTINGS */
+            /* TAB 3: SECURITY & OWNER PASSWORD SETTINGS */
             <form onSubmit={handleSaveSecurity} className="space-y-4">
               {isReadOnly && (
                 <div className="p-3 rounded-xl bg-[#f59e0b]/10 border border-[#f59e0b]/40 text-[#fdd663] text-[12px]">

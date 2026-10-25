@@ -25,7 +25,16 @@
   }
 }
 
-/* Custom subtle scrollbars for dark mode */
+/* Hide scrollbar for single-row sub-header while allowing horizontal scroll if needed */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Custom subtle scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -44,9 +53,121 @@
   background: #5f6368;
 }
 
-/* Dot matrix subtle background for NotebookLM canvas feel */
+.theme-light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+
+.theme-light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Dot matrix subtle background for Dark Studio & Medical Paper Light */
 .notebooklm-canvas-bg {
   background-color: #131314;
   background-image: radial-gradient(rgba(138, 180, 248, 0.08) 1px, transparent 1px);
   background-size: 24px 24px;
+}
+
+.theme-light .notebooklm-canvas-bg {
+  background-color: #f8fafc !important;
+  background-image: radial-gradient(#cbd5e1 1.25px, transparent 1.25px) !important;
+  background-size: 24px 24px !important;
+}
+
+/* ========================================================================== */
+/* MEDICAL PAPER LIGHT MODE (☀️ Chuẩn Sách Y Khoa - 100% Synchronized)        */
+/* Automatically remaps Dark Studio surfaces/borders/texts in Sidebar,        */
+/* Clinical Drawer, AI Importer, Essay Studio & Modals (excluding A4 Sheet)   */
+/* ========================================================================== */
+.theme-light {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+.theme-light :not(.a4-print-sheet):not(.a4-print-sheet *) {
+  /* Remap Dark Studio surfaces to Crisp Medical Paper Light surfaces */
+  &.bg-\[\#131314\],
+  &.bg-\[\#141517\],
+  &.bg-\[\#141518\],
+  &.bg-\[\#161718\],
+  &.bg-\[\#16171a\] {
+    background-color: #f8fafc !important;
+  }
+
+  &.bg-\[\#18191b\],
+  &.bg-\[\#18191c\],
+  &.bg-\[\#191a1d\],
+  &.bg-\[\#191a1e\],
+  &.bg-\[\#1b1c1e\],
+  &.bg-\[\#1b1c1f\],
+  &.bg-\[\#1e1f20\],
+  &.bg-\[\#1e1f23\],
+  &.bg-\[\#1e1f20\]\/95 {
+    background-color: #ffffff !important;
+  }
+
+  &.bg-\[\#202125\],
+  &.bg-\[\#242528\],
+  &.bg-\[\#242529\],
+  &.bg-\[\#26272b\],
+  &.bg-\[\#2d2e30\] {
+    background-color: #f1f5f9 !important;
+  }
+
+  &.bg-\[\#3f3c5c\] {
+    background-color: #eff6ff !important;
+  }
+
+  /* Remap Dark Studio borders to crisp Slate borders */
+  &.border-\[\#2d2e30\],
+  &.border-\[\#3c4043\],
+  &.border-\[\#4b5056\],
+  &.border-\[\#5f6368\] {
+    border-color: #cbd5e1 !important;
+  }
+
+  &.divide-\[\#2d2e30\] > :not([hidden]) ~ :not([hidden]),
+  &.divide-\[\#3c4043\] > :not([hidden]) ~ :not([hidden]) {
+    border-color: #e2e8f0 !important;
+  }
+
+  /* Remap light texts on dark surfaces to high-contrast dark slate texts */
+  &:not([data-keep-white="true"]).text-white,
+  &:not([data-keep-white="true"]).text-\[\#e3e3e3\],
+  &:not([data-keep-white="true"]).text-\[\#e8eaed\],
+  &:not([data-keep-white="true"]).text-\[\#f1f3f4\],
+  &:not([data-keep-white="true"]).text-\[\#f1f5f9\],
+  &:not([data-keep-white="true"]).text-\[\#e2e8f0\] {
+    color: #0f172a !important;
+  }
+
+  &.text-\[\#9aa0a6\],
+  &.text-\[\#b0b5ba\],
+  &.text-\[\#b8bdc2\],
+  &.text-\[\#cbd5e1\],
+  &.text-\[\#d1d5db\],
+  &.text-\[\#94a3b8\],
+  &.text-\[\#70757a\] {
+    color: #475569 !important;
+  }
+
+  /* Remap pastel dark-mode accents to readable medical deep accents on white */
+  &.text-\[\#8ab4f8\] {
+    color: #2563eb !important;
+  }
+  &.text-\[\#81c995\] {
+    color: #059669 !important;
+  }
+  &.text-\[\#fdd663\],
+  &.text-\[\#fde68a\] {
+    color: #d97706 !important;
+  }
+  &.text-\[\#f28b82\],
+  &.text-\[\#fca5a5\] {
+    color: #dc2626 !important;
+  }
+  &.text-\[\#c58af9\],
+  &.text-\[\#d8b4fe\] {
+    color: #7c3aed !important;
+  }
 }
