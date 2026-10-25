@@ -84,9 +84,12 @@ export const AIImporterModal: React.FC<AIImporterModalProps> = ({
         text: res.error || 'Dữ liệu JSON không hợp lệ.',
       });
     } else {
+      if (res.sanitizedText) {
+        setJsonInput(res.sanitizedText);
+      }
       setValidationMessage({
         type: 'success',
-        text: `Hợp lệ! Đã nhận diện bài "${res.data.title}" với ${res.data.nodeCount} node (Độ sâu: Cấp ${res.data.maxDepth}). Sẵn sàng dựng sơ đồ.`,
+        text: `Đã tự động làm sạch & kiểm tra hợp lệ! Nhận diện bài "${res.data.title}" với ${res.data.nodeCount} node (Độ sâu: Cấp ${res.data.maxDepth}). Sẵn sàng dựng sơ đồ.`,
       });
     }
   };

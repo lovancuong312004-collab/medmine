@@ -74,7 +74,13 @@ export interface MedMindDatabase {
 
 export type ActiveRecallLevel = 'off' | 'level2' | 'level3';
 
-export type MindmapViewMode = 'horizontal' | 'vertical' | 'bento';
+export type MindmapViewMode =
+  | 'horizontal'
+  | 'vertical'
+  | 'bento'
+  | 'cornell'
+  | 'fishbone'
+  | 'matrix';
 
 export type AuthRole = 'unauthenticated' | 'owner' | 'guest';
 

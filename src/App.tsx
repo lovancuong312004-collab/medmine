@@ -391,7 +391,7 @@ export default function App() {
     showToast('Đã xóa nhánh khỏi sơ đồ tư duy.');
   };
 
-  // Curriculum management handlers
+  // Curriculum management handlers (Create, Rename, Delete for Systems, Subjects, and Lessons)
   const handleCreateSystem = (name: string) => {
     if (isReadOnly) return;
     const newSysId = `sys-${Date.now()}`;
@@ -411,6 +411,59 @@ export default function App() {
     showToast(`Đã tạo Hệ cơ quan "${name}"`);
   };
 
+  const handleRenameSystem = (systemId: string, newName: string) => {
+    if (isReadOnly || !newName.trim()) return;
+    setDatabase((prev) => {
+      const nextDb: MedMindDatabase = {
+        ...prev,
+        systems: prev.systems.map((s) =>
+          s.id === systemId ? { ...s, name: newName.trim() } : s
+        ),
+      };
+      triggerBackgroundCloudPush(nextDb);
+      return nextDb;
+    });
+    showToast(`Đã đổi tên Hệ cơ quan thành "${newName.trim()}"`);
+  };
+
+  const handleDeleteSystem = (systemId: string) => {
+    if (isReadOnly) return;
+    if (database.systems.length <= 1) {
+      showToast('Không thể xóa Hệ cơ quan cuối cùng.');
+      return;
+    }
+
+    const remainingSystems = database.systems.filter((s) => s.id !== systemId);
+    const remainingSubjects = database.subjects.filter(
+      (sub) => sub.systemId !== systemId
+    );
+    const remainingLessons = database.lessons.filter(
+      (l) => l.systemId !== systemId
+    );
+
+    if (remainingLessons.length === 0) {
+      showToast('Không thể xóa vì kho dữ liệu phải còn ít nhất 1 bài học.');
+      return;
+    }
+
+    setDatabase((prev) => {
+      const nextDb: MedMindDatabase = {
+        ...prev,
+        systems: remainingSystems,
+        subjects: remainingSubjects,
+        lessons: remainingLessons,
+      };
+      triggerBackgroundCloudPush(nextDb);
+      return nextDb;
+    });
+
+    if (!remainingLessons.some((l) => l.id === activeLessonId) && remainingLessons[0]) {
+      setActiveLessonId(remainingLessons[0].id);
+      setSelectedNodeId(remainingLessons[0].rootNode.id);
+    }
+    showToast('Đã xóa Hệ cơ quan và đồng bộ lên Cloud.');
+  };
+
   const handleCreateSubject = (systemId: string, name: string) => {
     if (isReadOnly) return;
     const newSubId = `sub-${Date.now()}`;
@@ -425,9 +478,87 @@ export default function App() {
     showToast(`Đã thêm học phần "${name}"`);
   };
 
+  const handleRenameSubject = (subjectId: string, newName: string) => {
+    if (isReadOnly || !newName.trim()) return;
+    setDatabase((prev) => {
+      const nextDb: MedMindDatabase = {
+        ...prev,
+        subjects: prev.subjects.map((sub) =>
+          sub.id === subjectId ? { ...sub, name: newName.trim() } : sub
+        ),
+      };
+      triggerBackgroundCloudPush(nextDb);
+      return nextDb;
+    });
+    showToast(`Đã đổi tên Học phần thành "${newName.trim()}"`);
+  };
+
+  const handleDeleteSubject = (subjectId: string) => {
+    if (isReadOnly) return;
+    if (database.subjects.length <= 1) {
+      showToast('Không thể xóa Học phần cuối cùng.');
+      return;
+    }
+
+    const remainingSubjects = database.subjects.filter((s) => s.id !== subjectId);
+    const remainingLessons = database.lessons.filter(
+      (l) => l.subjectId !== subjectId
+    );
+
+    if (remainingLessons.length === 0) {
+      showToast('Không thể xóa vì kho dữ liệu phải còn ít nhất 1 bài học.');
+      return;
+    }
+
+    setDatabase((prev) => {
+      const nextDb: MedMindDatabase = {
+        ...prev,
+        subjects: remainingSubjects,
+        lessons: remainingLessons,
+      };
+      triggerBackgroundCloudPush(nextDb);
+      return nextDb;
+    });
+
+    if (!remainingLessons.some((l) => l.id === activeLessonId) && remainingLessons[0]) {
+      setActiveLessonId(remainingLessons[0].id);
+      setSelectedNodeId(remainingLessons[0].rootNode.id);
+    }
+    showToast('Đã xóa Học phần và đồng bộ lên Cloud.');
+  };
+
+  const handleRenameLesson = (lessonId: string, newTitle: string) => {
+    if (isReadOnly || !newTitle.trim()) return;
+    const cleanTitle = newTitle.trim();
+    setDatabase((prev) => {
+      const nextDb: MedMindDatabase = {
+        ...prev,
+        lessons: prev.lessons.map((l) =>
+          l.id === lessonId
+            ? {
+                ...l,
+                title: cleanTitle,
+                updatedAt: new Date().toISOString(),
+                rootNode: {
+                  ...l.rootNode,
+                  label: cleanTitle,
+                },
+              }
+            : l
+        ),
+      };
+      triggerBackgroundCloudPush(nextDb);
+      return nextDb;
+    });
+    showToast(`Đã đổi tên bài học thành "${cleanTitle}"`);
+  };
+
   const handleDeleteLesson = (lessonId: string) => {
     if (isReadOnly) return;
-    if (database.lessons.length <= 1) return;
+    if (database.lessons.length <= 1) {
+      showToast('Phải giữ lại ít nhất 1 bài học trong kho dữ liệu.');
+      return;
+    }
     const remaining = database.lessons.filter((l) => l.id !== lessonId);
     setDatabase((prev) => {
       const nextDb: MedMindDatabase = {
@@ -441,7 +572,7 @@ export default function App() {
       setActiveLessonId(remaining[0].id);
       setSelectedNodeId(remaining[0].rootNode.id);
     }
-    showToast('Đã xóa bài học.');
+    showToast('Đã xóa bài học và cập nhật Cloud.');
   };
 
   const handleUpdateLessonStatus = (lessonId: string, status: LessonStudyStatus) => {
@@ -559,13 +690,14 @@ export default function App() {
           setSelectedNodeId(parsed.lessons[0].rootNode.id);
           triggerBackgroundCloudPush(parsed);
           showToast(`Khôi phục thành công ${parsed.lessons.length} bài học!`);
-        } else if (parsed.rootNode) {
+        } else if (parsed.rootNode || parsed.root) {
+          const rootObj = parsed.rootNode || parsed.root;
           handleImportLesson({
-            title: parsed.title || parsed.rootNode.label || 'Bài học nhập từ file',
+            title: parsed.title || rootObj.label || rootObj.title || 'Bài học nhập từ file',
             systemId: activeLesson.systemId,
             subjectId: activeLesson.subjectId,
             tags: parsed.tags || ['Imported JSON'],
-            rootNode: parsed.rootNode,
+            rootNode: rootObj,
           });
         }
       } catch {
@@ -575,19 +707,40 @@ export default function App() {
     reader.readAsText(file);
   };
 
-  const handleResetSampleData = () => {
+  /**
+   * Safe Non-Destructive Sample Merge:
+   * Only adds missing sample systems/subjects/lessons without EVER deleting or overwriting user-created data!
+   */
+  const handleMergeSampleData = () => {
     if (isReadOnly) return;
     setDatabase((prev) => {
+      const existingSysIds = new Set(prev.systems.map((s) => s.id));
+      const existingSubIds = new Set(prev.subjects.map((s) => s.id));
+      const existingLessonIds = new Set(prev.lessons.map((l) => l.id));
+
+      const missingSystems = INITIAL_MEDMIND_DATA.systems.filter(
+        (s) => !existingSysIds.has(s.id)
+      );
+      const missingSubjects = INITIAL_MEDMIND_DATA.subjects.filter(
+        (s) => !existingSubIds.has(s.id)
+      );
+      const missingLessons = INITIAL_MEDMIND_DATA.lessons.filter(
+        (l) => !existingLessonIds.has(l.id)
+      );
+
       const nextDb: MedMindDatabase = {
-        ...INITIAL_MEDMIND_DATA,
-        security: prev.security,
+        ...prev,
+        systems: [...prev.systems, ...missingSystems],
+        subjects: [...prev.subjects, ...missingSubjects],
+        lessons: [...prev.lessons, ...missingLessons],
       };
+
       triggerBackgroundCloudPush(nextDb);
       return nextDb;
     });
-    setActiveLessonId('lesson-cancer-characteristics');
-    setSelectedNodeId('cancer-root');
-    showToast('Đã khôi phục dữ liệu mẫu gốc (Các đặc tính cơ bản của bệnh ung thư).');
+    showToast(
+      'Đã gộp thêm bài học mẫu bị thiếu (Giữ nguyên 100% các bài học bạn đã tạo)!'
+    );
   };
 
   const handleSaveSupabaseConfig = (newCfg: SupabaseConfig) => {
@@ -627,7 +780,12 @@ export default function App() {
           if (found) setSelectedNodeId(found.rootNode.id);
         }}
         onCreateSystem={handleCreateSystem}
+        onRenameSystem={handleRenameSystem}
+        onDeleteSystem={handleDeleteSystem}
         onCreateSubject={handleCreateSubject}
+        onRenameSubject={handleRenameSubject}
+        onDeleteSubject={handleDeleteSubject}
+        onRenameLesson={handleRenameLesson}
         onDeleteLesson={handleDeleteLesson}
         onUpdateLessonStatus={handleUpdateLessonStatus}
         onOpenImporter={() => !isReadOnly && setIsImporterOpen(true)}
@@ -641,11 +799,14 @@ export default function App() {
 
       {/* CENTER WORKSPACE COLUMN */}
       <div className="flex-1 h-full flex flex-col min-w-0 relative">
-        {/* Top Context Header (Strict 3-Zone Contract) */}
-        <header className="h-14 px-5 bg-[#1e1f20] border-b border-[#2d2e30] flex items-center justify-between gap-6 shrink-0 z-20">
+        {/* Top Context Header (Strict Non-Overlapping Flexbox Contract) */}
+        <header className="h-14 px-4 bg-[#1e1f20] border-b border-[#2d2e30] flex items-center justify-between gap-3 overflow-hidden shrink-0 z-20">
           {/* Zone 1: 3-Tier Curriculum Path & Editable Lesson Title */}
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-[12px] text-[#9aa0a6] whitespace-nowrap hidden sm:inline">
+          <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+            <span
+              title={`${activeSystem?.name || ''} / ${activeSubject?.name || ''}`}
+              className="text-[12px] text-[#9aa0a6] truncate max-w-[180px] xl:max-w-[260px] shrink hidden md:inline"
+            >
               {activeSystem?.name} / {activeSubject?.name} /
             </span>
 
@@ -654,47 +815,32 @@ export default function App() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   if (tempTitle.trim()) {
-                    setDatabase((prev) => {
-                      const nextDb: MedMindDatabase = {
-                        ...prev,
-                        lessons: prev.lessons.map((l) =>
-                          l.id === activeLesson.id
-                            ? {
-                                ...l,
-                                title: tempTitle.trim(),
-                                rootNode: {
-                                  ...l.rootNode,
-                                  label: tempTitle.trim(),
-                                },
-                              }
-                            : l
-                        ),
-                      };
-                      triggerBackgroundCloudPush(nextDb);
-                      return nextDb;
-                    });
+                    handleRenameLesson(activeLesson.id, tempTitle.trim());
                   }
                   setEditingLessonTitle(false);
                 }}
-                className="flex items-center gap-1.5"
+                className="flex items-center gap-1.5 min-w-0"
               >
                 <input
                   type="text"
                   autoFocus
                   value={tempTitle}
                   onChange={(e) => setTempTitle(e.target.value)}
-                  className="bg-[#131314] border border-[#8ab4f8] rounded px-2.5 py-1 text-[14px] font-display font-semibold text-white focus:outline-none"
+                  className="bg-[#131314] border border-[#8ab4f8] rounded px-2.5 py-1 text-[14px] font-display font-semibold text-white focus:outline-none w-56 max-w-full"
                 />
                 <button
                   type="submit"
-                  className="p-1 rounded bg-[#8ab4f8] text-[#131314]"
+                  className="p-1 rounded bg-[#8ab4f8] text-[#131314] shrink-0"
                 >
                   <Check className="w-3.5 h-3.5" />
                 </button>
               </form>
             ) : (
-              <div className="flex items-center gap-2 min-w-0">
-                <h2 className="font-display font-bold text-[15px] text-white truncate">
+              <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+                <h2
+                  title={activeLesson.title}
+                  className="font-display font-bold text-[14.5px] text-white truncate"
+                >
                   {activeLesson.title}
                 </h2>
                 {!isReadOnly && (
@@ -713,7 +859,7 @@ export default function App() {
             )}
           </div>
 
-          {/* Zone 2: Clean Unboxed Mastery & Cloud Sync Status */}
+          {/* Zone 2: Clean Unboxed Mastery & Cloud Sync Status (Never Overlaps, No Dangerous Reset Button) */}
           <div className="hidden lg:flex items-center gap-2 text-[12px] text-[#9aa0a6] whitespace-nowrap shrink-0">
             <span className="flex items-center gap-1 text-[#10b981] font-mono">
               <CheckCircle2 className="w-3.5 h-3.5" />
@@ -737,7 +883,7 @@ export default function App() {
               ) : cloudSyncStatus === 'synced' && isSupabaseConfigured(supabaseConfig) ? (
                 <>
                   <Cloud className="w-3.5 h-3.5 text-[#10b981]" />
-                  <span className="text-[#10b981]">☁️ Đã đồng bộ Cloud</span>
+                  <span className="text-[#10b981]">Đã đồng bộ Cloud</span>
                 </>
               ) : (
                 <>
@@ -746,19 +892,6 @@ export default function App() {
                 </>
               )}
             </button>
-            {!isReadOnly && (
-              <>
-                <span aria-hidden="true">·</span>
-                <button
-                  onClick={handleResetSampleData}
-                  title="Khôi phục bài học mẫu gốc"
-                  className="hover:text-white flex items-center gap-1 transition-colors cursor-pointer"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  <span>Reset mẫu</span>
-                </button>
-              </>
-            )}
           </div>
 
           {/* Zone 3: Primary Actions + Lock / Logout Button */}
@@ -875,6 +1008,7 @@ export default function App() {
             }
           }}
           onUpdateSecuritySettings={handleUpdateSecuritySettings}
+          onMergeSampleData={handleMergeSampleData}
           onClose={() => setIsCloudModalOpen(false)}
         />
       )}

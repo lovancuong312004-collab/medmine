@@ -70,67 +70,105 @@ export function calculateMasteryStats(root: MindmapNode): {
 }
 
 /**
- * Estimates node dimensions based on depth, label length, summary, and badge
+ * Checks whether a label already starts with an explicit numbering prefix (e.g. "1.", "2)", "1 -")
+ * to prevent duplicate numbering like "1. 1. ..."
+ */
+export function hasLeadingNumberPrefix(label: string): boolean {
+  return /^\s*\d+[\.\)\-:]/.test(label);
+}
+
+/**
+ * Estimates node dimensions based on depth, label length, summary, and whether semantic badges are visible.
+ * In 'vertical' mode, Level 3 & Level 4+ items are grouped as compact bullet items inside their Level 2 card.
  */
 export function getNodeDimensions(
   node: MindmapNode,
   depth: number,
-  orientation: 'horizontal' | 'vertical' = 'horizontal'
+  orientation: 'horizontal' | 'vertical' = 'horizontal',
+  showBadges = false
 ): { width: number; height: number } {
   const widthByDepthHorizontal: Record<number, number> = {
-    0: 320, // Root Node
-    1: 300, // Pillar Node
-    2: 285, // Subgroup Node
-    3: 305, // Detail Node with badge
+    0: 270, // Root Node
+    1: 255, // Pillar Node
+    2: 245, // Subgroup Node
+    3: 250, // Detail Node
   };
   const widthByDepthVertical: Record<number, number> = {
-    0: 340,
-    1: 295,
-    2: 275,
-    3: 275,
+    0: 310,
+    1: 276,
+    2: 264,
+    3: 264,
   };
 
   const width =
     orientation === 'horizontal'
-      ? widthByDepthHorizontal[depth] ?? 295
-      : widthByDepthVertical[depth] ?? 270;
+      ? widthByDepthHorizontal[depth] ?? 245
+      : widthByDepthVertical[depth] ?? 264;
 
-  const charsPerLine = depth === 0 ? 25 : depth === 1 ? 26 : depth === 2 ? 28 : 31;
+  const charsPerLine = depth === 0 ? 26 : depth === 1 ? 26 : depth === 2 ? 28 : 30;
   const labelLines = Math.max(1, Math.ceil(node.label.length / charsPerLine));
-  const lineHeight = depth === 0 ? 24 : depth === 1 ? 22 : 20;
+  const lineHeight = depth === 0 ? 22 : depth === 1 ? 20 : 18;
 
-  let height = 38 + labelLines * lineHeight;
+  // Compact px-3 py-2 padding (16px vertical padding) with no redundant meta header
+  let height = 18 + labelLines * lineHeight;
 
   if (node.summary && depth <= 2) {
     const summaryLines = Math.min(2, Math.ceil(node.summary.length / 34));
-    height += summaryLines * 17 + 14;
+    height += summaryLines * 16 + 8;
   }
 
-  if (node.badge || depth >= 1) {
-    height += 22;
+  if (showBadges && node.badge && depth >= 2) {
+    height += 20;
   }
 
-  const minHeight = depth === 0 ? 86 : depth === 1 ? 76 : depth === 2 ? 64 : 60;
+  // In Vertical Flowchart mode, Level 3 & Level 4+ children are rendered as compact bullet items inside Level 2
+  if (
+    orientation === 'vertical' &&
+    depth === 2 &&
+    !node.collapsed &&
+    node.children &&
+    node.children.length > 0
+  ) {
+    height += 10; // top border + margin before bullet list
+    const countBulletHeight = (items: MindmapNode[], subDepth: number) => {
+      for (const item of items) {
+        const bLines = Math.max(1, Math.ceil(item.label.length / 29));
+        height += bLines * 17 + 6;
+        if (showBadges && item.badge) {
+          height += 16;
+        }
+        if (!item.collapsed && item.children && item.children.length > 0) {
+          countBulletHeight(item.children, subDepth + 1);
+        }
+      }
+    };
+    countBulletHeight(node.children, 3);
+  }
+
+  const minHeight = depth === 0 ? 48 : depth === 1 ? 42 : depth === 2 ? 38 : 34;
   return { width, height: Math.max(minHeight, height) };
 }
 
 /**
- * Computes non-overlapping Horizontal Hierarchical Tree coordinates (Left -> Right)
+ * Computes compact, non-overlapping Horizontal Hierarchical Tree coordinates (Left -> Right)
  */
-export function computeHorizontalTreeLayout(rootNode: MindmapNode): {
+export function computeHorizontalTreeLayout(
+  rootNode: MindmapNode,
+  showBadges = false
+): {
   nodes: LayoutNode[];
   edges: LayoutEdge[];
   totalWidth: number;
   totalHeight: number;
 } {
   const HORIZONTAL_GAP_BY_DEPTH: Record<number, number> = {
-    0: 105,
-    1: 95,
-    2: 85,
-    3: 80,
+    0: 60,
+    1: 52,
+    2: 46,
+    3: 42,
   };
-  const VERTICAL_SIBLING_GAP = 22;
-  const VERTICAL_PILLAR_GAP = 36;
+  const VERTICAL_SIBLING_GAP = 9;
+  const VERTICAL_PILLAR_GAP = 16;
 
   interface TempTree {
     node: MindmapNode;
@@ -155,7 +193,7 @@ export function computeHorizontalTreeLayout(rootNode: MindmapNode): {
     pillarIndex?: number,
     inheritedAccent?: string
   ): TempTree {
-    const { width, height } = getNodeDimensions(node, depth, 'horizontal');
+    const { width, height } = getNodeDimensions(node, depth, 'horizontal', showBadges);
     const currentCrumb = [...breadcrumb, { id: node.id, label: node.label, depth }];
     const accentColor =
       depth === 1
@@ -272,7 +310,7 @@ export function computeHorizontalTreeLayout(rootNode: MindmapNode): {
         gap * (tree.children.length - 1);
 
       let childCurrentTopY = centerY - totalChildrenSpan / 2;
-      const horizontalGap = HORIZONTAL_GAP_BY_DEPTH[tree.depth] ?? 80;
+      const horizontalGap = HORIZONTAL_GAP_BY_DEPTH[tree.depth] ?? 42;
       const childX = x + tree.width + horizontalGap;
 
       for (const child of tree.children) {
@@ -291,35 +329,39 @@ export function computeHorizontalTreeLayout(rootNode: MindmapNode): {
     }
   }
 
-  assignCoordinates(measuredRoot, 60, 60, null, null, null, null, null);
+  assignCoordinates(measuredRoot, 48, 48, null, null, null, null, null);
 
   return {
     nodes: layoutNodes,
     edges: layoutEdges,
-    totalWidth: maxRight + 120,
-    totalHeight: maxBottom + 120,
+    totalWidth: maxRight + 100,
+    totalHeight: maxBottom + 100,
   };
 }
 
 /**
- * Computes Vertical Flowchart Tree coordinates (Top-to-Bottom)
+ * Computes compact Vertical Flowchart Tree coordinates (Top-to-Bottom)
  * - Root Node at top center
- * - Level 1 Pillars arranged horizontally below Root with generous spacing (64px)
- * - Level 2, 3, 4+ flow vertically downward inside each Pillar column with a dedicated left spine gutter (36px per level)
- *   so that vertical connector lines travel in the empty gutter on the left and NEVER cross over sibling cards!
+ * - Vertical gap from Root (Level 0) to Level 1 row: 40px (36px - 44px)
+ * - Horizontal gap between Level 1 columns: 14px (12px - 16px)
+ * - Vertical gap between Level 2 nodes below: 9px (8px - 10px)
+ * - Level 3 & Level 4+ nodes are grouped inside their parent Level 2 box as compact infographic bullet points!
  */
-export function computeVerticalFlowchartLayout(rootNode: MindmapNode): {
+export function computeVerticalFlowchartLayout(
+  rootNode: MindmapNode,
+  showBadges = false
+): {
   nodes: LayoutNode[];
   edges: LayoutEdge[];
   totalWidth: number;
   totalHeight: number;
 } {
-  const COLUMN_GAP = 64;
-  const ROOT_TO_LEVEL1_GAP = 96;
-  const VERTICAL_FLOW_GAP = 26;
-  const INDENT_PER_LEVEL = 38;
+  const COLUMN_GAP = 14;
+  const ROOT_TO_LEVEL1_GAP = 40;
+  const VERTICAL_FLOW_GAP = 9;
+  const INDENT_PER_LEVEL = 12;
 
-  const rootDim = getNodeDimensions(rootNode, 0, 'vertical');
+  const rootDim = getNodeDimensions(rootNode, 0, 'vertical', showBadges);
   const rootCrumb = [{ id: rootNode.id, label: rootNode.label, depth: 0 }];
   const rootDirectChildrenCount = getDirectChildrenCount(rootNode);
   const rootCollapsed = Boolean(rootNode.collapsed);
@@ -351,7 +393,7 @@ export function computeVerticalFlowchartLayout(rootNode: MindmapNode): {
     items: ColumnItem[];
   }
 
-  // Build each Level 1 Pillar as a clean vertical flowchart column
+  // Build each Level 1 Pillar as a compact vertical column (Level 1 + Level 2 cards; Level 3+ are bullets inside Level 2)
   const columns: PillarColumn[] = level1Children.map((pillar, idx) => {
     const pillarIndex = idx + 1;
     const accentColor =
@@ -359,7 +401,7 @@ export function computeVerticalFlowchartLayout(rootNode: MindmapNode): {
       LEVEL1_PILLAR_ACCENTS[idx % LEVEL1_PILLAR_ACCENTS.length];
     const items: ColumnItem[] = [];
     let currentY = 0;
-    let maxColWidth = 320;
+    let maxColWidth = 276;
 
     function traverseDownColumn(
       n: MindmapNode,
@@ -367,7 +409,7 @@ export function computeVerticalFlowchartLayout(rootNode: MindmapNode): {
       parentId: string,
       crumb: { id: string; label: string; depth: number }[]
     ) {
-      const { width, height } = getNodeDimensions(n, depth, 'vertical');
+      const { width, height } = getNodeDimensions(n, depth, 'vertical', showBadges);
       const indentOffset = Math.max(0, (depth - 1) * INDENT_PER_LEVEL);
       const currentCrumb = [...crumb, { id: n.id, label: n.label, depth }];
       const directCount = getDirectChildrenCount(n);
@@ -390,7 +432,9 @@ export function computeVerticalFlowchartLayout(rootNode: MindmapNode): {
       maxColWidth = Math.max(maxColWidth, indentOffset + width);
       currentY += height + VERTICAL_FLOW_GAP;
 
-      if (!isCol && n.children && n.children.length > 0) {
+      // Only expand Level 1 -> Level 2 as separate flowchart boxes;
+      // Level 3 & Level 4+ are rendered inside the Level 2 box as compact bullet items.
+      if (depth < 2 && !isCol && n.children && n.children.length > 0) {
         for (const child of n.children) {
           traverseDownColumn(child, depth + 1, n.id, currentCrumb);
         }
@@ -415,8 +459,8 @@ export function computeVerticalFlowchartLayout(rootNode: MindmapNode): {
         COLUMN_GAP * (columns.length - 1)
       : rootDim.width;
 
-  const canvasStartX = 60;
-  const rootY = 50;
+  const canvasStartX = 48;
+  const rootY = 44;
   const rootX = canvasStartX + Math.max(0, (totalColumnsWidth - rootDim.width) / 2);
 
   // Add Root Node
@@ -490,7 +534,7 @@ export function computeVerticalFlowchartLayout(rootNode: MindmapNode): {
 
       if (parentPos) {
         if (item.depth === 1) {
-          // Root -> Level 1 Pillar: Smooth Top-to-Bottom Bezier curve from bottom center of Root to top center of Pillar
+          // Root -> Level 1 Pillar: Smooth Top-to-Bottom Bezier curve
           layoutEdges.push({
             id: `v-edge-${item.parentId}-${item.node.id}`,
             sourceId: item.parentId,
@@ -503,18 +547,15 @@ export function computeVerticalFlowchartLayout(rootNode: MindmapNode): {
             accentColor: item.accentColor,
           });
         } else {
-          // Level 1 -> Level 2 -> Level 3+:
-          // Spine drops straight down inside the empty 38px left indent gutter (startX = parentPos.x + 18)
-          // Because child and all its siblings are indented by +38px to the right, this vertical line at parentPos.x + 18
-          // sits completely in the empty left gutter and NEVER crosses through any sibling card!
+          // Level 1 -> Level 2: Clean left spine connector inside the 12px indent gutter
           layoutEdges.push({
             id: `v-edge-${item.parentId}-${item.node.id}`,
             sourceId: item.parentId,
             targetId: item.node.id,
-            startX: parentPos.x + 18,
+            startX: parentPos.x + 6,
             startY: parentPos.y + parentPos.height,
             endX: absX,
-            endY: absY + item.height / 2,
+            endY: absY + 18,
             depth: item.depth,
             accentColor: item.accentColor,
           });
@@ -531,8 +572,8 @@ export function computeVerticalFlowchartLayout(rootNode: MindmapNode): {
   return {
     nodes: layoutNodes,
     edges: layoutEdges,
-    totalWidth: maxRight + 100,
-    totalHeight: maxBottom + 100,
+    totalWidth: maxRight + 80,
+    totalHeight: maxBottom + 80,
   };
 }
 
@@ -660,11 +701,106 @@ export function findNodeWithContext(
 }
 
 /**
- * Cleans and parses AI-generated JSON (strips ```json fences, validates structure, assigns IDs)
+ * Sanitizes raw JSON text copied from external AI tools / PDFs / chat windows:
+ * 1. Strips leading/trailing ```json and ``` markdown fences (and any surrounding text outside the outer { ... }).
+ * 2. Replaces curly quotes (“ ”) outside string literals with standard double quotes (").
+ * 3. Iterates character-by-character: if inside a string literal ("..."), replaces raw line breaks (\n, \r)
+ *    or unescaped control characters (ASCII < 32) with a single space ' ' to prevent
+ *    `SyntaxError: Bad control character in string literal`.
+ */
+export function sanitizeJsonString(rawText: string): string {
+  if (!rawText) return '';
+
+  // 1. Strip ```json ... ``` fences at both ends
+  let text = rawText.trim();
+  text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+  // Extract outermost JSON object if extra prose was copied
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    text = text.slice(firstBrace, lastBrace + 1);
+  }
+
+  // 2 & 3. Character-by-character state machine
+  let result = '';
+  let inString = false;
+  let isEscaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const code = text.charCodeAt(i);
+
+    if (inString) {
+      if (isEscaped) {
+        // Previous character was a backslash '\'
+        // If someone had a literal backslash followed by an actual newline, drop the newline
+        if (ch === '\n' || ch === '\r') {
+          result = result.slice(0, -1) + ' ';
+        } else {
+          result += ch;
+        }
+        isEscaped = false;
+        continue;
+      }
+
+      if (ch === '\\') {
+        isEscaped = true;
+        result += ch;
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = false;
+        result += ch;
+        continue;
+      }
+
+      // Inside a JSON string literal: replace raw line breaks (\n, \r) or any control char (ASCII < 32) with ' '
+      if (ch === '\n' || ch === '\r' || code < 32) {
+        // Collapse consecutive spaces when joining broken lines
+        if (!result.endsWith(' ')) {
+          result += ' ';
+        }
+        continue;
+      }
+
+      result += ch;
+    } else {
+      // Outside a string literal: normalize smart/curly double quotes (“ ” „ ‟) to standard '"'
+      if (ch === '“' || ch === '”' || ch === '„' || ch === '‟') {
+        inString = true;
+        result += '"';
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+        result += ch;
+        continue;
+      }
+
+      result += ch;
+    }
+  }
+
+  // Also remove trailing commas before } or ] outside strings if AI generated them
+  return result.replace(/,\s*([}\]])/g, '$1');
+}
+
+/**
+ * Cleans and parses AI-generated JSON (strips ```json fences, sanitizes control chars, validates structure, assigns IDs)
+ * Supports flexible recursive AI schemas:
+ * - Root wrapper: rootNode | root | mindmap | tree | data | top-level object
+ * - Title/Label: label | title | name | text | topic
+ * - Subtitle/Summary: summary | subtitle | description | shortDescription
+ * - Clinical notes: clinicalNotes | clinicalNote | note | notes | details | content | explanation
+ * - Children array: children | subNodes | items | branches | nodes | subtopics
  */
 export function parseAndValidateAIJson(rawInput: string): {
   valid: boolean;
   error?: string;
+  sanitizedText?: string;
   data?: {
     title: string;
     tags: string[];
@@ -677,19 +813,50 @@ export function parseAndValidateAIJson(rawInput: string): {
     return { valid: false, error: 'Vui lòng dán đoạn mã JSON từ AI vào ô nhập liệu.' };
   }
 
-  let cleaned = rawInput.trim();
-  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  const cleaned = sanitizeJsonString(rawInput);
 
   try {
     const parsed = JSON.parse(cleaned);
-    let rootCandidate: any = parsed.rootNode || parsed;
-    const title =
+
+    // Find the root node candidate flexibly
+    let rootCandidate: any =
+      parsed.rootNode ||
+      parsed.root ||
+      parsed.mindmap ||
+      parsed.tree ||
+      parsed.data ||
+      parsed;
+
+    // If parsed has top-level children/subNodes/items/branches directly, treat parsed itself as the root node
+    if (
+      !rootCandidate ||
+      typeof rootCandidate !== 'object' ||
+      (!rootCandidate.children &&
+        !rootCandidate.subNodes &&
+        !rootCandidate.items &&
+        !rootCandidate.branches &&
+        !rootCandidate.nodes &&
+        (Array.isArray(parsed.children) ||
+          Array.isArray(parsed.subNodes) ||
+          Array.isArray(parsed.items) ||
+          Array.isArray(parsed.branches)))
+    ) {
+      rootCandidate = parsed;
+    }
+
+    const title = String(
       parsed.title ||
-      rootCandidate.label ||
-      rootCandidate.title ||
-      rootCandidate.name ||
-      'Bài học Y khoa mới';
-    const tags = Array.isArray(parsed.tags) ? parsed.tags : ['AI Imported'];
+        parsed.lessonTitle ||
+        rootCandidate.label ||
+        rootCandidate.title ||
+        rootCandidate.name ||
+        rootCandidate.text ||
+        'Bài học Y khoa mới'
+    ).trim();
+
+    const tags = Array.isArray(parsed.tags)
+      ? parsed.tags.map((t: any) => String(t))
+      : ['AI Imported'];
 
     if (!rootCandidate || typeof rootCandidate !== 'object') {
       return { valid: false, error: 'Cấu trúc JSON không hợp lệ: Không tìm thấy node gốc.' };
@@ -706,16 +873,115 @@ export function parseAndValidateAIJson(rawInput: string): {
       'mechanism',
     ];
 
+    function extractClinicalNotes(raw: any): MindmapNode['clinicalNotes'] {
+      const cn = raw.clinicalNotes || raw.clinicalNote;
+      const fallbackNote =
+        raw.note ??
+        raw.notes ??
+        raw.details ??
+        raw.detail ??
+        raw.content ??
+        raw.explanation;
+
+      if (cn && typeof cn === 'object') {
+        const redFlags = Array.isArray(cn.redFlags)
+          ? cn.redFlags.map((r: any) => String(r))
+          : typeof cn.redFlags === 'string' && cn.redFlags.trim()
+          ? [cn.redFlags.trim()]
+          : undefined;
+
+        const markdownVal =
+          cn.markdown ||
+          cn.note ||
+          cn.notes ||
+          cn.details ||
+          (typeof fallbackNote === 'string' ? fallbackNote : undefined);
+
+        return {
+          pathogenesis: cn.pathogenesis || cn.mechanism || undefined,
+          clinicalFeatures: cn.clinicalFeatures || cn.symptoms || cn.clinical || undefined,
+          redFlags,
+          treatment: cn.treatment || cn.management || cn.therapy || undefined,
+          pearls: cn.pearls || cn.clinicalPearl || cn.tip || undefined,
+          markdown: markdownVal ? String(markdownVal) : undefined,
+        };
+      }
+
+      if (typeof cn === 'string' && cn.trim()) {
+        return { markdown: cn.trim() };
+      }
+
+      if (typeof fallbackNote === 'string' && fallbackNote.trim()) {
+        return { markdown: fallbackNote.trim() };
+      }
+
+      if (Array.isArray(fallbackNote) && fallbackNote.length > 0) {
+        return {
+          markdown: fallbackNote.map((item: any) => `- ${String(item)}`).join('\n'),
+        };
+      }
+
+      return undefined;
+    }
+
+    function extractChildrenArray(raw: any): any[] {
+      const candidates = [
+        raw.children,
+        raw.subNodes,
+        raw.subnodes,
+        raw.items,
+        raw.branches,
+        raw.subbranches,
+        raw.nodes,
+        raw.subtopics,
+      ];
+      for (const arr of candidates) {
+        if (Array.isArray(arr)) {
+          return arr;
+        }
+      }
+      return [];
+    }
+
     function normalizeNode(raw: any, depth: number, idx: number): MindmapNode {
       nodeCount++;
       maxDepth = Math.max(maxDepth, depth);
-      const label = String(raw.label || raw.title || raw.name || `Nhánh ${depth}.${idx + 1}`).trim();
-      const badge = validBadges.includes(raw.badge) ? (raw.badge as SemanticBadgeType) : undefined;
+
+      if (typeof raw === 'string' || typeof raw === 'number') {
+        return {
+          id: `node-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${nodeCount}`,
+          label: String(raw).trim(),
+          mastery: 'untested',
+        };
+      }
+
+      const label = String(
+        raw.label ||
+          raw.title ||
+          raw.name ||
+          raw.text ||
+          raw.topic ||
+          (depth === 0 ? title : `Nhánh ${depth}.${idx + 1}`)
+      ).trim();
+
+      const rawBadge = String(raw.badge || raw.tag || raw.type || '').toLowerCase();
+      const badge = validBadges.includes(rawBadge as SemanticBadgeType)
+        ? (rawBadge as SemanticBadgeType)
+        : undefined;
+
+      const summaryVal =
+        raw.summary ||
+        raw.subtitle ||
+        raw.description ||
+        raw.shortDescription ||
+        undefined;
+
+      const childItems = extractChildrenArray(raw);
 
       return {
         id: raw.id || `node-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${nodeCount}`,
         label,
-        summary: raw.summary || raw.description || undefined,
+        summary: summaryVal ? String(summaryVal).trim() : undefined,
         badge,
         accentColor:
           depth === 1
@@ -723,23 +989,11 @@ export function parseAndValidateAIJson(rawInput: string): {
             : undefined,
         collapsed: Boolean(raw.collapsed),
         mastery: raw.mastery || 'untested',
-        clinicalNotes: raw.clinicalNotes
-          ? {
-              pathogenesis: raw.clinicalNotes.pathogenesis,
-              clinicalFeatures: raw.clinicalNotes.clinicalFeatures,
-              redFlags: Array.isArray(raw.clinicalNotes.redFlags)
-                ? raw.clinicalNotes.redFlags
-                : undefined,
-              treatment: raw.clinicalNotes.treatment,
-              pearls: raw.clinicalNotes.pearls,
-              markdown: raw.clinicalNotes.markdown || raw.notes,
-            }
-          : raw.notes
-          ? { markdown: String(raw.notes) }
-          : undefined,
-        children: Array.isArray(raw.children)
-          ? raw.children.map((c: any, cIdx: number) => normalizeNode(c, depth + 1, cIdx))
-          : undefined,
+        clinicalNotes: extractClinicalNotes(raw),
+        children:
+          childItems.length > 0
+            ? childItems.map((c: any, cIdx: number) => normalizeNode(c, depth + 1, cIdx))
+            : undefined,
       };
     }
 
@@ -747,6 +1001,7 @@ export function parseAndValidateAIJson(rawInput: string): {
 
     return {
       valid: true,
+      sanitizedText: cleaned,
       data: {
         title,
         tags,
@@ -758,7 +1013,8 @@ export function parseAndValidateAIJson(rawInput: string): {
   } catch (err: any) {
     return {
       valid: false,
-      error: `Lỗi cú pháp JSON: ${err.message}. Hãy kiểm tra lại dấu ngoặc kép hoặc dấu phẩy cuối dòng.`,
+      sanitizedText: cleaned,
+      error: `Lỗi cú pháp JSON: ${err.message}. Hãy bấm "Tự động sửa & Làm sạch JSON" hoặc kiểm tra dấu ngoặc kép.`,
     };
   }
 }

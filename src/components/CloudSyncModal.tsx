@@ -33,6 +33,7 @@ interface CloudSyncModalProps {
   onSaveConfig: (newConfig: SupabaseConfig) => void;
   onReplaceDatabase: (newDb: MedMindDatabase) => void;
   onUpdateSecuritySettings: (newSecurity: SecuritySettings) => void;
+  onMergeSampleData: () => void;
   onClose: () => void;
 }
 
@@ -57,6 +58,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   onSaveConfig,
   onReplaceDatabase,
   onUpdateSecuritySettings,
+  onMergeSampleData,
   onClose,
 }) => {
   const [activeTab, setActiveTab] = useState<'cloud' | 'security'>('cloud');
@@ -456,6 +458,32 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                     />
                   </label>
                 </div>
+              </div>
+
+              {/* Safe Non-Destructive Sample Restoration */}
+              <div className="p-4 rounded-xl bg-[#131314] border border-[#2d2e30] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <span className="text-[12.5px] font-display font-semibold text-white block">
+                    Khôi phục bài học mẫu gốc (An toàn 100%)
+                  </span>
+                  <p className="text-[11.5px] text-[#9aa0a6]">
+                    Chỉ gộp thêm 2 bài học mẫu nếu bị thiếu, tuyệt đối không xóa hay ghi đè các bài học bạn đã tạo.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={isReadOnly}
+                  onClick={() => {
+                    onMergeSampleData();
+                    setStatusMsg({
+                      type: 'success',
+                      text: 'Đã gộp thêm các bài học mẫu bị thiếu (Giữ nguyên 100% bài học hiện có của bạn)!',
+                    });
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-[#2d2e30] hover:bg-[#3c4043] border border-[#3c4043] text-[12px] font-medium text-[#8ab4f8] hover:text-white shrink-0 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  ➕ Khôi phục thêm bài mẫu (Không xóa bài hiện có)
+                </button>
               </div>
 
               <div className="flex justify-end">

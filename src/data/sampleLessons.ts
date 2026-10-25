@@ -623,20 +623,26 @@ $$DT = \\frac{(t_2 - t_1) \\times \\ln(2)}{\\ln(V_2 / V_1)}$$
   ],
 };
 
-export const AI_PROMPT_TEMPLATE = `Bạn là một Giáo sư Y khoa và Chuyên gia Giải phẫu bệnh / Lâm sàng. Hãy chuyển đổi nội dung bài học Y khoa tôi cung cấp bên dưới thành cấu trúc JSON chuẩn cho hệ thống sơ đồ tư duy phân cấp **MedMind Studio**.
+export const AI_PROMPT_TEMPLATE = `Bạn là một Giáo sư Y khoa và Chuyên gia Giải phẫu bệnh / Lâm sàng. Hãy chuyển đổi toàn bộ nội dung bài học Y khoa tôi cung cấp bên dưới thành cấu trúc JSON chuẩn cho hệ thống sơ đồ tư duy phân cấp **MedMind Studio**.
 
-### YÊU CẦU CẤU TRÚC PHÂN CẤP 4-5 TẦNG (CỰC KỲ QUAN TRỌNG):
-- **Cấp 0 (Root Node)**: Tên bệnh lý hoặc Chủ đề bài học chính.
-- **Cấp 1 (Nhánh trụ cột)**: Các phần lớn của bài học (VD: Đại cương, Cơ chế bệnh sinh, Triệu chứng Lâm sàng, Cận lâm sàng, Chẩn đoán, Điều trị, Tiên lượng...).
-- **Cấp 2 (Nhánh phân nhóm)**: Các nhóm triệu chứng, giai đoạn bệnh, nhóm xét nghiệm hoặc nhóm thuốc chính.
-- **Cấp 3 & Cấp 4 (Chi tiết sâu)**: Cơ chế phân tử, giải phẫu bệnh, tiêu chuẩn vàng, dấu hiệu cờ đỏ, liều lượng thuốc cụ thể. **Bắt buộc gắn nhãn phân loại y khoa (\`badge\`)** cho các node Cấp 3 & Cấp 4 theo 1 trong 5 giá trị sau:
+### 1. YÊU CẦU CẤU TRÚC PHÂN CẤP 4–5 TẦNG (BẮT BUỘC ĐẦY ĐỦ CHI TIẾT, KHÔNG TÓM TẮT SƠ SÀI):
+- **Cấp 0 (Root Node - \`rootNode\`)**: Tên bệnh lý hoặc Chủ đề bài học chính.
+- **Cấp 1 (Nhánh trụ cột - \`children\` của Cấp 0)**: Các phần lớn của bài học (VD: Đại cương, Cơ chế bệnh sinh, Triệu chứng Lâm sàng, Cận lâm sàng, Chẩn đoán, Điều trị, Tiên lượng...).
+- **Cấp 2 (Nhánh phân nhóm - \`children\` của Cấp 1)**: Các nhóm triệu chứng, giai đoạn bệnh, nhóm xét nghiệm hoặc nhóm thuốc chính.
+- **Cấp 3 & Cấp 4 (Chi tiết sâu - \`children\` của Cấp 2, Cấp 3)**: Cơ chế phân tử, giải phẫu bệnh, tiêu chuẩn vàng, dấu hiệu cờ đỏ, liều lượng thuốc cụ thể.
+- **Bắt buộc gắn nhãn phân loại y khoa (\`badge\`)** cho các node Cấp 2, Cấp 3 & Cấp 4 theo 1 trong 5 giá trị sau:
   - \`"danger"\`: 🔴 Cờ đỏ lâm sàng, cấp cứu, chống chỉ định tuyệt đối, biến chứng tử vong.
   - \`"warning"\`: 🟡 Lưu ý lâm sàng, tác dụng phụ, biến chứng, yếu tố nguy cơ.
   - \`"treatment"\`: 🟢 Phác đồ điều trị, tên thuốc, liều lượng, nguyên tắc phẫu thuật.
   - \`"diagnostic"\`: 🔵 Tiêu chuẩn vàng, dấu hiệu mô bệnh học, cận lâm sàng, chẩn đoán xác định.
   - \`"mechanism"\`: 🟣 Cơ chế bệnh sinh, sinh lý bệnh, đột biến gen, giải phẫu bệnh.
 
-### ĐỊNH DẠNG JSON ĐẦU RA (CHỈ TRẢ VỀ JSON HỢP LỆ):
+### 2. QUY TẮC CÚ PHÁP JSON NGHIÊM NGẶT:
+- Chỉ trả về **1 khối mã JSON duy nhất** hợp lệ.
+- Tuyệt đối **KHÔNG ngắt dòng (Enter) trực tiếp bên trong chuỗi \`"..."\`** (nếu muốn xuống dòng trong trường \`markdown\` thì dùng ký tự \`\\n\`).
+- Luôn dùng tên trường chuẩn: \`label\` (hoặc \`title\`), \`summary\` (hoặc \`subtitle\`), \`badge\`, \`clinicalNotes\` (hoặc \`note\`), và \`children\` cho danh sách nhánh con.
+
+### 3. MẪU ĐỊNH DẠNG JSON ĐẦU RA:
 \`\`\`json
 {
   "title": "Tên Bài Học Y Khoa",
@@ -651,28 +657,31 @@ export const AI_PROMPT_TEMPLATE = `Bạn là một Giáo sư Y khoa và Chuyên 
       "redFlags": ["Dấu hiệu cờ đỏ 1", "Dấu hiệu cờ đỏ 2"],
       "treatment": "Nguyên tắc và phác đồ điều trị chuẩn...",
       "pearls": "Mẹo nhớ lâm sàng nhanh (Clinical Pearls)...",
-      "markdown": "### Bảng phân biệt / Công thức tính y khoa chi tiết (nếu có)"
+      "markdown": "### Bảng phân biệt / Công thức tính y khoa chi tiết (dùng \\n để xuống dòng)"
     },
     "children": [
       {
         "id": "level1-1",
-        "label": "Tên Nhánh Trụ Cột (Cấp 1)",
+        "label": "Tên Nhánh Trụ Cột 1 (Cấp 1)",
         "summary": "Mô tả ngắn nhánh Cấp 1",
         "accentColor": "#8ab4f8",
         "clinicalNotes": {
-          "pathogenesis": "Giải thích chuyên sâu cho nhánh này..."
+          "pathogenesis": "Giải thích chuyên sâu cho nhánh trụ cột này...",
+          "pearls": "Lưu ý quan trọng khi đi lâm sàng..."
         },
         "children": [
           {
             "id": "level2-1",
-            "label": "Tên Nhánh Phân Nhóm (Cấp 2)",
+            "label": "Tên Nhánh Phân Nhóm 1.1 (Cấp 2)",
+            "summary": "Tóm tắt ngắn phân nhóm",
             "children": [
               {
                 "id": "level3-1",
-                "label": "Chi tiết sâu Cấp 3 (cơ chế, liều thuốc, tiêu chuẩn...)",
+                "label": "Chi tiết sâu Cấp 3 (cơ chế, liều thuốc, tiêu chuẩn vàng...)",
                 "badge": "mechanism",
                 "clinicalNotes": {
-                  "pearls": "Ghi chú lâm sàng sâu hơn khi click vào node..."
+                  "pathogenesis": "Phân tích sâu cơ chế phân tử / giải phẫu bệnh...",
+                  "treatment": "Liều lượng thuốc hoặc cách xử trí cụ thể..."
                 },
                 "children": [
                   {
