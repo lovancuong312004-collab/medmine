@@ -118,13 +118,17 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
     (naturalWidth: number, naturalHeight: number) => {
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
-      const safeLeft = 64;
-      const safeTop = 28;
-      const availW = Math.max(480, rect.width - safeLeft - 36);
-      const availH = Math.max(360, rect.height - safeTop - 24);
+      const isMobileViewport = rect.width < 768;
+      const safeLeft = isMobileViewport ? 16 : 64;
+      const safeTop = isMobileViewport ? 16 : 28;
+      const availW = Math.max(280, rect.width - safeLeft - (isMobileViewport ? 16 : 36));
+      const availH = Math.max(280, rect.height - safeTop - (isMobileViewport ? 68 : 24));
 
       const rawScale = Math.min(availW / naturalWidth, availH / naturalHeight);
-      const clampedScale = Math.min(Math.max(rawScale, 0.54), 0.82);
+      const clampedScale = Math.min(
+        Math.max(rawScale, isMobileViewport ? 0.38 : 0.54),
+        0.82
+      );
 
       const scaledW = naturalWidth * clampedScale;
       const scaledH = naturalHeight * clampedScale;
@@ -148,7 +152,7 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
   );
 
   /**
-   * Smart Fit View & Readable Zoom (92% - 96%)
+   * Smart Fit View & Readable Zoom (92% - 96% on Desktop, responsive on Mobile)
    */
   const fitViewReadable = useCallback(
     (targetMode: MindmapViewMode = viewMode) => {
@@ -161,12 +165,19 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
         return;
       }
       const rect = containerRef.current.getBoundingClientRect();
+      const isMobileViewport = rect.width < 768;
 
       const targetScale =
         targetMode === 'horizontal'
-          ? 0.96
+          ? isMobileViewport
+            ? 0.78
+            : 0.96
           : targetMode === 'fishbone'
-          ? 0.74
+          ? isMobileViewport
+            ? 0.52
+            : 0.74
+          : isMobileViewport
+          ? 0.72
           : 0.92;
 
       if (targetMode === 'vertical') {
@@ -178,16 +189,22 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
           pillarCount > 0
             ? pillarCount * colWidth + (pillarCount - 1) * colGap
             : 360;
-        const availW = Math.max(480, rect.width - 96);
+        const availW = Math.max(280, rect.width - (isMobileViewport ? 24 : 96));
         const fittedScale = Math.min(
           0.95,
-          Math.max(0.58, Number((availW / totalFlowWidth).toFixed(2)))
+          Math.max(
+            isMobileViewport ? 0.42 : 0.58,
+            Number((availW / totalFlowWidth).toFixed(2))
+          )
         );
         const centerX = totalFlowWidth / 2;
-        const newX = Math.max(56, rect.width / 2 - centerX * fittedScale);
+        const newX = Math.max(
+          isMobileViewport ? 12 : 56,
+          rect.width / 2 - centerX * fittedScale
+        );
         setTransform({
           x: Math.round(newX),
-          y: 28,
+          y: isMobileViewport ? 18 : 28,
           scale: fittedScale,
         });
         return;
@@ -204,15 +221,20 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
       const rootLayoutNode = layout.nodes.find((n) => n.depth === 0);
       if (rootLayoutNode) {
         const rootCenterY = rootLayoutNode.y + rootLayoutNode.height / 2;
-        const newX = 64;
-        const newY = rect.height / 2 - rootCenterY * targetScale;
+        const newX = isMobileViewport ? 16 : 64;
+        const usableHeight = isMobileViewport ? rect.height - 56 : rect.height;
+        const newY = usableHeight / 2 - rootCenterY * targetScale;
         setTransform({
           x: newX,
           y: newY,
           scale: targetScale,
         });
       } else {
-        setTransform({ x: 64, y: 36, scale: 0.96 });
+        setTransform({
+          x: isMobileViewport ? 16 : 64,
+          y: 28,
+          scale: targetScale,
+        });
       }
     },
     [
@@ -305,6 +327,102 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
 
   const handleMouseUp = () => {
     setIsDragging(false);
+  };
+
+  // Native 1-Finger Touch Pan & 2-Finger Pinch-to-Zoom for Mobile Canvas
+  const touchStateRef = useRef<{
+    mode: 'none' | 'pan' | 'pinch';
+    startX: number;
+    startY: number;
+    initialDist: number;
+    initialScale: number;
+    initialTransformX: number;
+    initialTransformY: number;
+    pinchCenterX: number;
+    pinchCenterY: number;
+  }>({
+    mode: 'none',
+    startX: 0,
+    startY: 0,
+    initialDist: 0,
+    initialScale: 1,
+    initialTransformX: 0,
+    initialTransformY: 0,
+    pinchCenterX: 0,
+    pinchCenterY: 0,
+  });
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (isScrollablePageMode) return;
+    if ((e.target as HTMLElement).closest('[data-floating-ui="true"]')) return;
+
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      touchStateRef.current = {
+        ...touchStateRef.current,
+        mode: 'pan',
+        startX: t.clientX - transform.x,
+        startY: t.clientY - transform.y,
+      };
+    } else if (e.touches.length === 2 && containerRef.current) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const rect = containerRef.current.getBoundingClientRect();
+      const midX = (t1.clientX + t2.clientX) / 2 - rect.left;
+      const midY = (t1.clientY + t2.clientY) / 2 - rect.top;
+
+      touchStateRef.current = {
+        mode: 'pinch',
+        startX: 0,
+        startY: 0,
+        initialDist: Math.max(10, dist),
+        initialScale: transform.scale,
+        initialTransformX: transform.x,
+        initialTransformY: transform.y,
+        pinchCenterX: midX,
+        pinchCenterY: midY,
+      };
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (isScrollablePageMode) return;
+    const state = touchStateRef.current;
+
+    if (state.mode === 'pan' && e.touches.length === 1) {
+      const t = e.touches[0];
+      setTransform((prev) => ({
+        ...prev,
+        x: t.clientX - state.startX,
+        y: t.clientY - state.startY,
+      }));
+    } else if (state.mode === 'pinch' && e.touches.length === 2) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const ratio = dist / state.initialDist;
+      const newScale = Math.min(2.5, Math.max(0.22, state.initialScale * ratio));
+
+      const newX =
+        state.pinchCenterX -
+        ((state.pinchCenterX - state.initialTransformX) * newScale) /
+          state.initialScale;
+      const newY =
+        state.pinchCenterY -
+        ((state.pinchCenterY - state.initialTransformY) * newScale) /
+          state.initialScale;
+
+      setTransform({
+        x: newX,
+        y: newY,
+        scale: newScale,
+      });
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchStateRef.current.mode = 'none';
   };
 
   const handleZoomIn = () => {
@@ -487,7 +605,7 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                         {childBadge.dot} {childBadge.shortLabel}
                       </span>
                     )}
-                    <span className="text-[12.5px] text-[#e8eaed] leading-snug">
+                    <span className={`text-[12.5px] leading-snug ${isLight ? 'text-slate-800' : 'text-[#e8eaed]'}`}>
                       {hasKeywordPrefix ? (
                         <>
                           <strong
@@ -589,11 +707,11 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                 {badgeMeta.dot} {badgeMeta.shortLabel}
               </span>
             )}
-            <p className="font-display font-semibold text-[13.5px] text-white leading-snug">
+            <p className={`font-display font-semibold text-[13.5px] leading-snug ${isLight ? 'text-slate-900' : 'text-white'}`}>
               {node.label}
             </p>
             {node.summary && (
-              <p className="mt-1 text-[11.5px] text-[#b0b5ba] leading-snug">
+              <p className={`mt-1 text-[11.5px] leading-snug ${isLight ? 'text-slate-600' : 'text-[#b0b5ba]'}`}>
                 {node.summary}
               </p>
             )}
@@ -672,11 +790,11 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
       {/* Automatically hidden when Zen Study Mode (isZenMode) is active!       */}
       {/* ===================================================================== */}
       {!isZenMode && (
-        <div className="h-11 px-3 bg-[#1e1f20] border-b border-[#2d2e30] flex items-center justify-between gap-2 shrink-0 overflow-x-auto no-scrollbar z-20">
-          {/* Left Group: 6 Diagram Modes + Level Filter + Badges */}
+        <div className="h-10 md:h-11 px-2.5 md:px-3 bg-[#1e1f20] border-b border-[#2d2e30] flex items-center justify-between gap-2 shrink-0 overflow-x-auto no-scrollbar z-20">
+          {/* Left Group: 6 Diagram Modes (Desktop only) + Level Filter + Badges */}
           <div className="flex items-center gap-1.5 shrink-0">
-            {/* 1. 6-Mode Multi-Diagram Switcher */}
-            <div className="flex items-center gap-0.5 bg-[#131314] border border-[#2d2e30] rounded-lg p-0.5">
+            {/* 1. 6-Mode Multi-Diagram Switcher — Desktop (>= 768px) only; Mobile uses fixed Bottom Navigation Bar */}
+            <div className="hidden md:flex items-center gap-0.5 bg-[#131314] border border-[#2d2e30] rounded-lg p-0.5">
               <button
                 onClick={() => setViewMode('horizontal')}
                 className={`px-2 py-1 rounded-md text-[11.5px] font-display font-semibold flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer ${
@@ -758,7 +876,7 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                 <button
                   key={btn.level}
                   onClick={() => handleLevelClick(btn.level)}
-                  className={`px-2 py-1 rounded-md text-[11.5px] font-medium transition-all whitespace-nowrap cursor-pointer ${
+                  className={`px-2.5 py-1 rounded-md text-xs md:text-[11.5px] font-medium transition-all whitespace-nowrap cursor-pointer ${
                     activeLevelFilterBtn === btn.level
                       ? 'bg-[#3f3c5c] border border-[#8ab4f8]/60 text-white font-semibold'
                       : 'text-[#9aa0a6] hover:text-white hover:bg-[#2d2e30]'
@@ -777,7 +895,7 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                   ? 'Đang hiện tem nhãn y khoa (Click để ẩn cho gọn)'
                   : 'Bật hiển thị tem nhãn y khoa (🔴 Cờ đỏ, 🔵 Chẩn đoán, 🟢 Điều trị...)'
               }
-              className={`px-2.5 py-1 rounded-lg border text-[11.5px] font-medium flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer ${
+              className={`px-2.5 py-1 rounded-lg border text-xs md:text-[11.5px] font-medium flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer ${
                 showBadges
                   ? 'bg-[#3f3c5c] border-[#8ab4f8] text-white font-semibold'
                   : 'bg-[#131314] border-[#2d2e30] text-[#9aa0a6] hover:text-white hover:bg-[#2d2e30]'
@@ -813,7 +931,7 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                 <button
                   key={mode.id}
                   onClick={() => onChangeActiveRecall(mode.id)}
-                  className={`px-2 py-1 rounded-md text-[11.5px] font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                  className={`px-2.5 py-1 rounded-md text-xs md:text-[11.5px] font-medium transition-colors whitespace-nowrap cursor-pointer ${
                     activeRecallLevel === mode.id
                       ? mode.id === 'off'
                         ? 'bg-[#2d2e30] text-white'
@@ -830,7 +948,7 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
               <button
                 onClick={onOpenEssayStudio}
                 title="Mở Trung tâm Luyện Thi Tự Luận theo Barem 0.25đ - 0.5đ & Từ khóa Y khoa"
-                className="px-2.5 py-1 rounded-lg bg-[#3f3c5c] hover:bg-[#4e4a70] border border-[#8ab4f8]/60 text-white font-display font-semibold text-[11.5px] flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer"
+                className="px-2.5 py-1 rounded-lg bg-[#3f3c5c] hover:bg-[#4e4a70] border border-[#8ab4f8]/60 text-white font-display font-semibold text-xs md:text-[11.5px] flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer"
               >
                 <span>✍️ Luyện Tự Luận</span>
               </button>
@@ -840,7 +958,7 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
               <button
                 onClick={onOpenPrintStudio}
                 title="Xuất PDF / In A4 Đề Cương Tự Luận, Infographic Ngang & Đề Khuyết Chữ"
-                className="px-2.5 py-1 rounded-lg bg-[#131314] hover:bg-[#2d2e30] border border-[#3c4043] text-[#e3e3e3] font-display font-semibold text-[11.5px] flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer"
+                className="hidden md:flex px-2.5 py-1 rounded-lg bg-[#131314] hover:bg-[#2d2e30] border border-[#3c4043] text-[#e3e3e3] font-display font-semibold text-[11.5px] items-center gap-1 transition-all whitespace-nowrap cursor-pointer"
               >
                 <span>🖨️ Xuất PDF</span>
               </button>
@@ -850,7 +968,7 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
               <button
                 onClick={onToggleZenMode}
                 title="Chế độ Học Full Sạch Sẽ (Ẩn toàn bộ thanh bên và thanh tiêu đề — Phím tắt: Z)"
-                className="px-2.5 py-1 rounded-lg bg-[#10b981]/15 hover:bg-[#10b981]/25 border border-[#10b981]/50 text-[#10b981] font-display font-semibold text-[11.5px] flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer"
+                className="px-2.5 py-1 rounded-lg bg-[#10b981]/15 hover:bg-[#10b981]/25 border border-[#10b981]/50 text-[#10b981] font-display font-semibold text-xs md:text-[11.5px] flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer"
               >
                 <Maximize2 className="w-3 h-3" />
                 <span>⛶ Học Full (Z)</span>
@@ -869,6 +987,9 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
         className={`relative flex-1 min-h-0 notebooklm-canvas-bg overflow-hidden ${
           isScrollablePageMode
             ? 'cursor-default'
@@ -946,21 +1067,29 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
           /* ===================================================================== */
           /* MODE 3: MEDICAL BENTO BOARD / FRAMED CARD GRID VIEW                   */
           /* ===================================================================== */
-          <div className="w-full h-full overflow-y-auto pt-5 pb-12 px-4 select-text">
+          <div className="w-full h-full overflow-y-auto pt-3 md:pt-5 pb-24 md:pb-12 px-3 md:px-4 select-text">
             <div className="max-w-[1600px] mx-auto space-y-4">
               {/* Compact Root Topic Header Card */}
               <div
                 onClick={() => onSelectNode(rootNode.id)}
-                className={`px-4 py-3 rounded-xl bg-[#3f3c5c] border-2 transition-all cursor-pointer shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
-                  selectedNodeId === rootNode.id ? 'border-white' : 'border-[#8ab4f8]'
+                className={`px-4 py-3 rounded-xl border-2 transition-all cursor-pointer shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
+                  isLight ? 'bg-blue-50' : 'bg-[#3f3c5c]'
+                } ${
+                  selectedNodeId === rootNode.id
+                    ? isLight
+                      ? 'border-blue-700'
+                      : 'border-white'
+                    : isLight
+                    ? 'border-blue-400'
+                    : 'border-[#8ab4f8]'
                 }`}
               >
                 <div className="space-y-0.5">
-                  <h1 className="font-display font-bold text-[17px] text-white">
+                  <h1 className={`font-display font-bold text-[17px] ${isLight ? 'text-blue-950' : 'text-white'}`}>
                     {rootNode.label}
                   </h1>
                   {rootNode.summary && (
-                    <p className="text-[12.5px] text-[#e3e3e3]/90">{rootNode.summary}</p>
+                    <p className={`text-[12.5px] ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>{rootNode.summary}</p>
                   )}
                 </div>
 
@@ -1113,10 +1242,10 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
           /* MODE 1, MODE 2 & MODE 5: 2D PANNABLE/ZOOMABLE DIAGRAM STAGES          */
           /* ===================================================================== */
           <>
-            {/* NOTEBOOKLM FLOATING CONTROL DOCK (LEFT SIDE) */}
+            {/* DESKTOP NOTEBOOKLM FLOATING CONTROL DOCK (LEFT SIDE — hidden on Mobile) */}
             <div
               data-floating-ui="true"
-              className="absolute left-4 top-1/2 -translate-y-1/2 z-20 flex flex-col gap-1 bg-[#1e1f20]/95 backdrop-blur-md border border-[#2d2e30] p-1.5 rounded-2xl shadow-xl"
+              className="hidden md:flex absolute left-4 top-1/2 -translate-y-1/2 z-20 flex-col gap-1 bg-[#1e1f20]/95 backdrop-blur-md border border-[#2d2e30] p-1.5 rounded-2xl shadow-xl"
             >
               <button
                 onClick={handleZoomIn}
@@ -1164,6 +1293,18 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                 <FileJson className="w-4 h-4" />
               </button>
             </div>
+
+            {/* MOBILE SINGLE COMPACT FIT BUTTON (🎯 Fit — bottom-right above Bottom Bar) */}
+            <button
+              data-floating-ui="true"
+              onClick={() => fitViewReadable(viewMode)}
+              title="Căn giữa sơ đồ vừa màn hình (🎯 Fit)"
+              className={`md:hidden absolute right-3 ${
+                isZenMode ? 'bottom-4' : 'bottom-16'
+              } z-25 w-9 h-9 rounded-full bg-[#1e1f20]/95 border border-[#8ab4f8]/60 text-[#8ab4f8] shadow-lg flex items-center justify-center text-[13px] font-bold active:scale-95 transition-transform cursor-pointer`}
+            >
+              🎯
+            </button>
 
             {/* TRANSFORMABLE MINDMAP STAGE */}
             {viewMode === 'fishbone' ? (
@@ -1373,8 +1514,8 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                             }}
                             className="relative px-5 py-2.5 border-2 rounded-xl shadow-md text-center cursor-pointer transition-colors"
                           >
-                            <div className="text-[12.5px] text-[#e2e8f0] leading-relaxed font-medium">
-                              <strong className="text-[#8ab4f8] font-bold uppercase text-[11.5px] mr-1.5">
+                            <div className={`text-[12.5px] leading-relaxed font-medium ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                              <strong className={`font-bold uppercase text-[11.5px] mr-1.5 ${isLight ? 'text-blue-700' : 'text-[#8ab4f8]'}`}>
                                 Định nghĩa & Tổng quan:
                               </strong>
                               {generalDefinitionText}
@@ -1931,6 +2072,11 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                                                             <div className="pl-6 pr-1 pt-0.5 space-y-0.5">
                                                               {lvl3Node.children.map(
                                                                 (lvl4) => {
+                                                                  const l4Blurred =
+                                                                    isNodeDepthBlurred(
+                                                                      lvl4.id,
+                                                                      4
+                                                                    );
                                                                   const l4Colon =
                                                                     lvl4.label.indexOf(
                                                                       ':'
@@ -1947,11 +2093,32 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                                                                         e
                                                                       ) => {
                                                                         e.stopPropagation();
+                                                                        if (
+                                                                          activeRecallLevel !==
+                                                                            'off' &&
+                                                                          !revealedNodeIds[
+                                                                            lvl4.id
+                                                                          ]
+                                                                        ) {
+                                                                          setRevealedNodeIds(
+                                                                            (
+                                                                              prev
+                                                                            ) => ({
+                                                                              ...prev,
+                                                                              [lvl4.id]:
+                                                                                true,
+                                                                            })
+                                                                          );
+                                                                        }
                                                                         onSelectNode(
                                                                           lvl4.id
                                                                         );
                                                                       }}
-                                                                      className="text-[11.5px] text-[#cbd5e1] leading-snug hover:text-white cursor-pointer flex items-start gap-1.5 py-0.5"
+                                                                      className={`text-[11.5px] leading-snug cursor-pointer flex items-start gap-1.5 py-0.5 ${
+                                                                        isLight
+                                                                          ? 'text-slate-700 hover:text-slate-950'
+                                                                          : 'text-[#cbd5e1] hover:text-white'
+                                                                      }`}
                                                                     >
                                                                       <span
                                                                         style={{
@@ -1962,7 +2129,13 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                                                                       >
                                                                         •
                                                                       </span>
-                                                                      <span>
+                                                                      <span
+                                                                        className={
+                                                                          l4Blurred
+                                                                            ? 'blur-[5px] opacity-60 select-none'
+                                                                            : ''
+                                                                        }
+                                                                      >
                                                                         {l4HasKw ? (
                                                                           <>
                                                                             <strong
@@ -2216,8 +2389,9 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                     containerClasses = isLight
                       ? 'rounded-[12px] shadow-md'
                       : 'bg-[#3f3c5c] hover:bg-[#49456b] rounded-[12px] shadow-xl';
-                    labelClasses =
-                      'font-display font-bold text-[15.5px] text-white leading-snug';
+                    labelClasses = `font-display font-bold text-[15.5px] leading-snug ${
+                      isLight ? 'text-blue-950' : 'text-white'
+                    }`;
                     inlineBorderStyle = {
                       backgroundColor: isLight ? '#eff6ff' : undefined,
                       border: isSelected
@@ -2228,8 +2402,9 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                     containerClasses = isLight
                       ? 'rounded-[10px] shadow-sm'
                       : 'bg-[#2d2e30] hover:bg-[#35373a] rounded-[10px] shadow-md';
-                    labelClasses =
-                      'font-display font-semibold text-[14px] text-white leading-snug';
+                    labelClasses = `font-display font-semibold text-[14px] leading-snug ${
+                      isLight ? 'text-slate-900' : 'text-white'
+                    }`;
                     inlineBorderStyle = {
                       backgroundColor: isLight ? lightPillarPalette.bg : undefined,
                       borderTop: isSelected
@@ -2247,8 +2422,9 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                     containerClasses = isLight
                       ? 'rounded-[10px] shadow-xs'
                       : 'bg-[#242528] hover:bg-[#2d2f33] rounded-[10px] shadow-sm';
-                    labelClasses =
-                      'font-display font-semibold text-[13px] text-[#f1f3f4] leading-snug';
+                    labelClasses = `font-display font-semibold text-[13px] leading-snug ${
+                      isLight ? 'text-slate-900' : 'text-[#f1f3f4]'
+                    }`;
                     inlineBorderStyle = {
                       backgroundColor: isLight ? '#ffffff' : undefined,
                       borderTop: isSelected
@@ -2270,8 +2446,9 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                     containerClasses = isLight
                       ? 'rounded-[9px] shadow-xs'
                       : 'bg-[#1b1c1f] hover:bg-[#242529] rounded-[9px] shadow-sm';
-                    labelClasses =
-                      'font-medium text-[12.5px] text-[#e8eaed] leading-snug';
+                    labelClasses = `font-medium text-[12.5px] leading-snug ${
+                      isLight ? 'text-slate-800' : 'text-[#e8eaed]'
+                    }`;
                     inlineBorderStyle = {
                       backgroundColor: isLight ? '#ffffff' : undefined,
                       borderTop: isSelected
@@ -2356,7 +2533,17 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                           </div>
 
                           {node.summary && depth <= 2 && (
-                            <p className="text-[11.5px] text-[#b8bdc2] mt-1 pt-1 border-t border-[#3c4043]/40 line-clamp-2 leading-snug">
+                            <p
+                              className={`text-[11.5px] mt-1 pt-1 border-t line-clamp-2 leading-snug ${
+                                depth === 0
+                                  ? isLight
+                                    ? 'text-slate-700 border-blue-200'
+                                    : 'text-slate-300 border-[#3c4043]/40'
+                                  : isLight
+                                  ? 'text-slate-600 border-slate-200'
+                                  : 'text-[#b8bdc2] border-[#3c4043]/40'
+                              }`}
+                            >
                               {node.summary}
                             </p>
                           )}
@@ -2481,6 +2668,78 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
           </>
         )}
       </div>
+
+      {/* ===================================================================== */}
+      {/* NATIVE MOBILE BOTTOM NAVIGATION BAR (h-14, < 768px only)              */}
+      {/* Houses the 6 Diagram Modes for instant 1-thumb switching              */}
+      {/* ===================================================================== */}
+      {!isZenMode && (
+        <nav
+          data-floating-ui="true"
+          className={`fixed bottom-0 inset-x-0 z-30 h-14 backdrop-blur-md border-t flex items-center justify-around px-1 md:hidden ${
+            isLight
+              ? 'bg-white/95 border-slate-200 shadow-[0_-4px_12px_rgba(15,23,42,0.06)]'
+              : 'bg-[#1e1f20]/95 border-[#2d2e30] shadow-[0_-4px_14px_rgba(0,0,0,0.35)]'
+          }`}
+        >
+          {(
+            [
+              {
+                id: 'horizontal' as MindmapViewMode,
+                icon: '🌿',
+                label: 'Cây Ngang',
+              },
+              {
+                id: 'vertical' as MindmapViewMode,
+                icon: '📊',
+                label: 'Infographic',
+              },
+              {
+                id: 'bento' as MindmapViewMode,
+                icon: '🍱',
+                label: 'Khung Bảng',
+              },
+              {
+                id: 'cornell' as MindmapViewMode,
+                icon: '📝',
+                label: 'Vở Cornell',
+              },
+              {
+                id: 'fishbone' as MindmapViewMode,
+                icon: '🐟',
+                label: 'Xương Cá',
+              },
+              {
+                id: 'matrix' as MindmapViewMode,
+                icon: '⚖️',
+                label: 'Bảng So Sánh',
+              },
+            ] as const
+          ).map((item) => {
+            const isActive = viewMode === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setViewMode(item.id)}
+                className={`flex-1 h-11 mx-0.5 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                  isActive
+                    ? isLight
+                      ? 'bg-blue-600 text-white font-bold shadow-xs'
+                      : 'bg-[#8ab4f8] text-[#131314] font-bold shadow-xs'
+                    : isLight
+                    ? 'text-slate-600 hover:bg-slate-100 font-medium'
+                    : 'text-[#9aa0a6] hover:bg-[#2d2e30] font-medium'
+                }`}
+              >
+                <span className="text-[14px] leading-none">{item.icon}</span>
+                <span className="text-[10px] font-display leading-none tracking-tight truncate max-w-full px-0.5">
+                  {item.label}
+                </span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
     </div>
   );
 };

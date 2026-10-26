@@ -397,7 +397,7 @@ export function extractMedicalKeywordsFromText(
 
     // Numeric thresholds with complete Vietnamese units
     const numUnitMatches = String(src).matchAll(
-      /(?<![\p{L}\p{N}])((?:[><≥≤±]\s*)?\d+(?:[.,–-]\d+)?\s*(?:%|cm|mm|mg|mcg|g|kg|ml|lít|mmol\/l|ng\/ml|u\/l|ngày|tuần|tháng|năm|tuổi|độ|giai đoạn|lần|điểm))(?![\p{L}])/giu
+      /(?<![\p{L}\p{N}])((?:[><≥≤±]\s*)?\d+(?:[.,–-]\d+)?\s*(?:%|cm|mm|mg|mcg|g|kg|ml|lít|mmol\/l|ng\/ml|u\/l|ngày|tuần|tháng|năm|tuổi|độ|giai đoạn|lần|điểm))(?=\s|$|[.,;:!?)])(?![\p{L}])/giu
     );
     for (const m of numUnitMatches) {
       if (m[1] && m[1].trim().length >= 2) {
@@ -518,198 +518,232 @@ export function buildMedicalRubricCriteria(
     const targetPillars =
       filteredPillars.length > 0 ? filteredPillars : allPillars;
 
-    const totalQuarters = Math.max(4, Math.round((totalPoints || 5) * 4)); // Number of 0.25đ units
+    const safeTotalPoints = Number((totalPoints > 0 ? totalPoints : 5).toFixed(2));
+    const totalQuarters = Math.max(4, Math.round(safeTotalPoints * 4)); // Number of 0.25đ units
 
-
-  // Collect candidate items at Level 2 (and Level 3 if scope is a single pillar or few Level 2s)
-  interface RawCandidate {
-    nodeId: string;
-    pillarIndex: number;
-    pillarLabel: string;
-    code: string;
-    title: string;
-    standardContent: string;
-    subPoints: string[];
-    requiredKeywords: string[];
-    weightScore: number;
-    semanticBadge?: string;
-  }
-
-  const level2Candidates: RawCandidate[] = [];
-  const level3GranularCandidates: RawCandidate[] = [];
-
-  targetPillars.forEach((pillar, idx) => {
-    const pIdx =
-      scopeId === 'all'
-        ? idx + 1
-        : allPillars.findIndex((p) => p.id === pillar.id) + 1 || 1;
-    const pCleanLabel = cleanNodeLabel(pillar.label);
-    const lvl2Nodes = pillar.children || [];
-
-    if (lvl2Nodes.length === 0) {
-      const notes = getClinicalNoteSnippets(pillar);
-      const kws = extractMedicalKeywordsFromText(
-        pillar.label,
-        pillar.summary,
-        notes,
-        5
-      );
-      const item: RawCandidate = {
-        nodeId: pillar.id,
-        pillarIndex: pIdx,
-        pillarLabel: pCleanLabel,
-        code: `${pIdx}.1`,
-        title: pCleanLabel,
-        standardContent: pillar.summary || pCleanLabel,
-        subPoints: notes,
-        requiredKeywords: kws,
-        weightScore: 2,
-        semanticBadge: pillar.badge,
-      };
-      level2Candidates.push(item);
-      level3GranularCandidates.push(item);
-      return;
+    // Collect candidate items at Level 2 (and Level 3 if scope is a single pillar or few Level 2s)
+    interface RawCandidate {
+      nodeId: string;
+      pillarIndex: number;
+      pillarLabel: string;
+      code: string;
+      title: string;
+      standardContent: string;
+      subPoints: string[];
+      requiredKeywords: string[];
+      weightScore: number;
+      semanticBadge?: string;
     }
 
-    lvl2Nodes.forEach((lvl2, l2Idx) => {
-      const l2Code = `${pIdx}.${l2Idx + 1}`;
-      const l2Clean = cleanNodeLabel(lvl2.label);
-      const lvl3Nodes = lvl2.children || [];
-      const lvl3Texts = lvl3Nodes.map((c) => {
-        const cClean = cleanNodeLabel(c.label);
-        const lvl4Texts = (c.children || []).map((g) => cleanNodeLabel(g.label));
-        const extra = [c.summary, ...lvl4Texts].filter(Boolean).join('; ');
-        return extra ? `${cClean} — ${extra}` : cClean;
-      });
-      const noteSnippets = getClinicalNoteSnippets(lvl2);
-      const allSubPoints = [...lvl3Texts, ...noteSnippets];
+    const level2Candidates: RawCandidate[] = [];
+    const level3GranularCandidates: RawCandidate[] = [];
 
-      const kws = extractMedicalKeywordsFromText(
-        lvl2.label,
-        lvl2.summary,
-        allSubPoints,
-        5
-      );
+    targetPillars.forEach((pillar, idx) => {
+      const pIdx =
+        scopeId === 'all'
+          ? idx + 1
+          : allPillars.findIndex((p) => p.id === pillar.id) + 1 || 1;
+      const pCleanLabel = cleanNodeLabel(pillar.label);
+      const lvl2Nodes = pillar.children || [];
 
-      const stdParts = [l2Clean];
-      if (lvl2.summary) stdParts.push(lvl2.summary);
+      if (lvl2Nodes.length === 0) {
+        const notes = getClinicalNoteSnippets(pillar);
+        const kws = extractMedicalKeywordsFromText(
+          pillar.label,
+          pillar.summary,
+          notes,
+          5
+        );
+        const item: RawCandidate = {
+          nodeId: pillar.id,
+          pillarIndex: pIdx,
+          pillarLabel: pCleanLabel,
+          code: `${pIdx}.1`,
+          title: pCleanLabel,
+          standardContent: pillar.summary || pCleanLabel,
+          subPoints: notes,
+          requiredKeywords: kws,
+          weightScore: 2,
+          semanticBadge: pillar.badge,
+        };
+        level2Candidates.push(item);
+        level3GranularCandidates.push(item);
+        return;
+      }
 
-      level2Candidates.push({
-        nodeId: lvl2.id,
-        pillarIndex: pIdx,
-        pillarLabel: pCleanLabel,
-        code: l2Code,
-        title: l2Clean,
-        standardContent: stdParts.join(' — '),
-        subPoints: allSubPoints,
-        requiredKeywords: kws,
-        weightScore: Math.max(1, allSubPoints.length + (lvl2.summary ? 1 : 0)),
-        semanticBadge: lvl2.badge || pillar.badge,
-      });
+      lvl2Nodes.forEach((lvl2, l2Idx) => {
+        const l2Code = `${pIdx}.${l2Idx + 1}`;
+        const l2Clean = cleanNodeLabel(lvl2.label);
+        const lvl3Nodes = lvl2.children || [];
+        const lvl3Texts = lvl3Nodes.map((c) => {
+          const cClean = cleanNodeLabel(c.label);
+          const lvl4Texts = (c.children || []).map((g) => cleanNodeLabel(g.label));
+          const extra = [c.summary, ...lvl4Texts].filter(Boolean).join('; ');
+          return extra ? `${cClean} — ${extra}` : cClean;
+        });
+        const noteSnippets = getClinicalNoteSnippets(lvl2);
+        const allSubPoints = [...lvl3Texts, ...noteSnippets];
 
-      // Also build granular Level 3 candidates in case the user picked a single pillar or high score scale
-      if (lvl3Nodes.length > 0 && scopeId !== 'all') {
-        lvl3Nodes.forEach((lvl3, l3Idx) => {
-          const l3Code = `${l2Code}.${l3Idx + 1}`;
-          const l3Clean = cleanNodeLabel(lvl3.label);
-          const lvl4Sub = (lvl3.children || []).map((g) => cleanNodeLabel(g.label));
-          const l3Notes = getClinicalNoteSnippets(lvl3);
-          const subPts = [...lvl4Sub, ...l3Notes];
-          const l3Kws = extractMedicalKeywordsFromText(
-            lvl3.label,
-            lvl3.summary,
-            subPts,
-            4
-          );
-          level3GranularCandidates.push({
-            nodeId: lvl3.id,
-            pillarIndex: pIdx,
-            pillarLabel: `${pCleanLabel} › ${l2Clean}`,
-            code: l3Code,
-            title: l3Clean,
-            standardContent: lvl3.summary
-              ? `${l3Clean} — ${lvl3.summary}`
-              : l3Clean,
-            subPoints: subPts,
-            requiredKeywords: l3Kws,
-            weightScore: Math.max(1, subPts.length + 1),
-            semanticBadge: lvl3.badge || lvl2.badge,
+        const kws = extractMedicalKeywordsFromText(
+          lvl2.label,
+          lvl2.summary,
+          allSubPoints,
+          5
+        );
+
+        const stdParts = [l2Clean];
+        if (lvl2.summary) stdParts.push(lvl2.summary);
+
+        level2Candidates.push({
+          nodeId: lvl2.id,
+          pillarIndex: pIdx,
+          pillarLabel: pCleanLabel,
+          code: l2Code,
+          title: l2Clean,
+          standardContent: stdParts.join(' — '),
+          subPoints: allSubPoints,
+          requiredKeywords: kws,
+          weightScore: Math.max(1, allSubPoints.length + (lvl2.summary ? 1 : 0)),
+          semanticBadge: lvl2.badge || pillar.badge,
+        });
+
+        // Also build granular Level 3 candidates in case the user picked a single pillar or high score scale
+        if (lvl3Nodes.length > 0 && scopeId !== 'all') {
+          lvl3Nodes.forEach((lvl3, l3Idx) => {
+            const l3Code = `${l2Code}.${l3Idx + 1}`;
+            const l3Clean = cleanNodeLabel(lvl3.label);
+            const lvl4Sub = (lvl3.children || []).map((g) => cleanNodeLabel(g.label));
+            const l3Notes = getClinicalNoteSnippets(lvl3);
+            const subPts = [...lvl4Sub, ...l3Notes];
+            const l3Kws = extractMedicalKeywordsFromText(
+              lvl3.label,
+              lvl3.summary,
+              subPts,
+              4
+            );
+            level3GranularCandidates.push({
+              nodeId: lvl3.id,
+              pillarIndex: pIdx,
+              pillarLabel: `${pCleanLabel} › ${l2Clean}`,
+              code: l3Code,
+              title: l3Clean,
+              standardContent: lvl3.summary
+                ? `${l3Clean} — ${lvl3.summary}`
+                : l3Clean,
+              subPoints: subPts,
+              requiredKeywords: l3Kws,
+              weightScore: Math.max(1, subPts.length + 1),
+              semanticBadge: lvl3.badge || lvl2.badge,
+            });
           });
-        });
-      } else {
-        level3GranularCandidates.push(level2Candidates[level2Candidates.length - 1]);
-      }
+        } else {
+          level3GranularCandidates.push(level2Candidates[level2Candidates.length - 1]);
+        }
+      });
     });
-  });
 
-  // Choose whether to use granular Level 3 rows or Level 2 rows so row count <= totalQuarters
-  let chosenPool =
-    scopeId !== 'all' &&
-    level3GranularCandidates.length <= totalQuarters &&
-    level3GranularCandidates.length > level2Candidates.length
-      ? level3GranularCandidates
-      : level2Candidates;
+    // Choose whether to use granular Level 3 rows or Level 2 rows so row count <= totalQuarters
+    let chosenPool =
+      scopeId !== 'all' &&
+      level3GranularCandidates.length <= totalQuarters &&
+      level3GranularCandidates.length > level2Candidates.length
+        ? level3GranularCandidates
+        : level2Candidates;
 
-  if (chosenPool.length === 0) {
-    return [];
-  }
+    if (chosenPool.length === 0) {
+      return [];
+    }
 
-  // If chosenPool has more items than totalQuarters (e.g., 20 Level 2 nodes on a 3.0pt = 12 quarters test),
-  // merge sibling items within the same pillar so count <= totalQuarters
-  if (chosenPool.length > totalQuarters) {
-    const mergedPool: RawCandidate[] = [];
-    const groupSize = Math.ceil(chosenPool.length / totalQuarters);
-    for (let i = 0; i < chosenPool.length; i += groupSize) {
-      const slice = chosenPool.slice(i, i + groupSize);
-      const first = slice[0];
-      if (slice.length === 1) {
-        mergedPool.push(first);
-      } else {
-        const combinedTitle = slice.map((s) => s.title).join(' & ');
-        const combinedSubs = slice.flatMap((s) => [
-          s.standardContent,
-          ...s.subPoints,
-        ]);
-        const combinedKws = Array.from(
-          new Set(slice.flatMap((s) => s.requiredKeywords))
-        ).slice(0, 6);
-        mergedPool.push({
-          nodeId: first.nodeId,
-          pillarIndex: first.pillarIndex,
-          pillarLabel: first.pillarLabel,
-          code: first.code,
-          title: combinedTitle,
-          standardContent: combinedTitle,
-          subPoints: combinedSubs,
-          requiredKeywords: combinedKws,
-          weightScore: slice.reduce((acc, s) => acc + s.weightScore, 0),
-          semanticBadge: first.semanticBadge,
-        });
+    // If chosenPool has more items than totalQuarters (e.g., 50 Level 2 nodes on a 5.0pt = 20 quarters test),
+    // merge sibling items within the same pillar so count <= totalQuarters
+    if (chosenPool.length > totalQuarters) {
+      const mergedPool: RawCandidate[] = [];
+      const groupSize = Math.ceil(chosenPool.length / totalQuarters);
+      for (let i = 0; i < chosenPool.length; i += groupSize) {
+        const slice = chosenPool.slice(i, i + groupSize);
+        const first = slice[0];
+        if (slice.length === 1) {
+          mergedPool.push(first);
+        } else {
+          const combinedTitle = slice.map((s) => s.title).join(' & ');
+          const combinedSubs = slice.flatMap((s) => [
+            s.standardContent,
+            ...s.subPoints,
+          ]);
+          const combinedKws = Array.from(
+            new Set(slice.flatMap((s) => s.requiredKeywords))
+          ).slice(0, 6);
+          mergedPool.push({
+            nodeId: first.nodeId,
+            pillarIndex: first.pillarIndex,
+            pillarLabel: first.pillarLabel,
+            code: first.code,
+            title: combinedTitle,
+            standardContent: combinedTitle,
+            subPoints: combinedSubs,
+            requiredKeywords: combinedKws,
+            weightScore: slice.reduce((acc, s) => acc + s.weightScore, 0),
+            semanticBadge: first.semanticBadge,
+          });
+        }
+      }
+      chosenPool = mergedPool;
+    }
+
+    // Allocate points across `chosenPool.length` items so sum strictly equals `safeTotalPoints`
+    let allocatedArray: number[];
+
+    if (chosenPool.length <= totalQuarters && Math.abs(totalQuarters * 0.25 - safeTotalPoints) < 0.001) {
+      const quartersPerItem = new Array(chosenPool.length).fill(1);
+      let remainingQuarters = totalQuarters - chosenPool.length;
+
+      if (remainingQuarters > 0) {
+        const sortedIndices = chosenPool
+          .map((item, index) => ({ index, weight: item.weightScore }))
+          .sort((a, b) => b.weight - a.weight);
+
+        let ptr = 0;
+        while (remainingQuarters > 0) {
+          const targetIdx = sortedIndices[ptr % sortedIndices.length].index;
+          quartersPerItem[targetIdx] += 1;
+          remainingQuarters -= 1;
+          ptr += 1;
+        }
+      }
+      allocatedArray = quartersPerItem.map((q) => Number((q * 0.25).toFixed(2)));
+    } else {
+      const totalWeight = chosenPool.reduce((acc, item) => acc + Math.max(1, item.weightScore), 0);
+      allocatedArray = chosenPool.map((item) => {
+        const exact = (Math.max(1, item.weightScore) / totalWeight) * safeTotalPoints;
+        return Math.max(0.05, Math.round(exact * 100) / 100);
+      });
+    }
+
+    // Final strict remainder normalization so the sum of allocatedArray NEVER exceeds or falls short of safeTotalPoints
+    const currentSum = Math.round(allocatedArray.reduce((acc, val) => acc + val, 0) * 100);
+    const targetSum = Math.round(safeTotalPoints * 100);
+    let diffCents = targetSum - currentSum;
+
+    if (diffCents !== 0 && allocatedArray.length > 0) {
+      const sortedByPoints = allocatedArray
+        .map((pts, index) => ({ index, pts }))
+        .sort((a, b) => b.pts - a.pts);
+
+      let ptr = 0;
+      let guard = 0;
+      while (diffCents !== 0 && guard < 10000) {
+        const targetIdx = sortedByPoints[ptr % sortedByPoints.length].index;
+        if (diffCents > 0) {
+          allocatedArray[targetIdx] = Number((allocatedArray[targetIdx] + 0.01).toFixed(2));
+          diffCents -= 1;
+        } else if (allocatedArray[targetIdx] > 0.05) {
+          allocatedArray[targetIdx] = Number((allocatedArray[targetIdx] - 0.01).toFixed(2));
+          diffCents += 1;
+        }
+        ptr += 1;
+        guard += 1;
       }
     }
-    chosenPool = mergedPool;
-  }
-
-  // Distribute `totalQuarters` (units of 0.25đ) across `chosenPool.length` items:
-  // Step 1: Give every item at least 1 quarter (0.25đ)
-  const quartersPerItem = new Array(chosenPool.length).fill(1);
-  let remainingQuarters = totalQuarters - chosenPool.length;
-
-  // Step 2: Distribute remaining quarters proportionally by weightScore
-  if (remainingQuarters > 0) {
-    // Sort indices by weightScore descending
-    const sortedIndices = chosenPool
-      .map((item, index) => ({ index, weight: item.weightScore }))
-      .sort((a, b) => b.weight - a.weight);
-
-    let ptr = 0;
-    while (remainingQuarters > 0) {
-      const targetIdx = sortedIndices[ptr % sortedIndices.length].index;
-      quartersPerItem[targetIdx] += 1;
-      remainingQuarters -= 1;
-      ptr += 1;
-    }
-  }
 
     return chosenPool.map((item, idx) => ({
       id: `rubric-${item.nodeId}-${idx}`,
@@ -721,13 +755,26 @@ export function buildMedicalRubricCriteria(
       standardContent: item.standardContent,
       subPoints: item.subPoints,
       requiredKeywords: item.requiredKeywords,
-      allocatedPoints: Number((quartersPerItem[idx] * 0.25).toFixed(2)),
+      allocatedPoints: allocatedArray[idx],
       semanticBadge: item.semanticBadge,
     }));
   } catch (err) {
     console.warn('buildMedicalRubricCriteria fallback due to malformed node:', err);
     return [];
   }
+}
+
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function containsKeywordWithBoundary(normText: string, normKw: string): boolean {
+  if (!normText || !normKw) return false;
+  if (normKw.length <= 4) {
+    const regex = new RegExp(`(?:^|\\s)${escapeRegExp(normKw)}(?:\\s|$)`, 'i');
+    return regex.test(normText);
+  }
+  return normText.includes(normKw);
 }
 
 /**
@@ -754,10 +801,10 @@ export function evaluateEssayAgainstRubric(
         continue;
       }
 
-      // Direct substring match or token match for multi-word medical keywords
+      // Direct match (using word-boundary regex for short keywords <= 4 chars)
       const isDirectMatch =
-        normEssay.includes(normKw) ||
-        (noAccentKw.length >= 4 && noAccentEssay.includes(noAccentKw));
+        containsKeywordWithBoundary(normEssay, normKw) ||
+        (noAccentKw.length >= 4 && containsKeywordWithBoundary(noAccentEssay, noAccentKw));
 
       if (isDirectMatch) {
         matchedKeywords.push(kw);
@@ -767,7 +814,9 @@ export function evaluateEssayAgainstRubric(
           .split(' ')
           .filter((w) => w.length >= 2 && !VIETNAMESE_STOPWORDS.has(w));
         if (words.length >= 3) {
-          const hitWords = words.filter((w) => normEssay.includes(w));
+          const hitWords = words.filter((w) =>
+            containsKeywordWithBoundary(normEssay, w)
+          );
           if (hitWords.length / words.length >= 0.75) {
             matchedKeywords.push(kw);
             continue;

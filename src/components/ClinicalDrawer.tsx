@@ -214,7 +214,14 @@ export const ClinicalDrawer: React.FC<ClinicalDrawerProps> = ({
     setEditPearls(node.clinicalNotes?.pearls || '');
     setEditMarkdown(node.clinicalNotes?.markdown || '');
     setIsEditing(false);
-  }, [node.id]);
+  }, [
+    node?.id,
+    node?.label,
+    node?.summary,
+    node?.badge,
+    node?.accentColor,
+    node?.clinicalNotes,
+  ]);
 
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -274,7 +281,12 @@ export const ClinicalDrawer: React.FC<ClinicalDrawerProps> = ({
   );
 
   return (
-    <aside className="w-[410px] h-full bg-[#1e1f20] border-l border-[#2d2e30] flex flex-col shrink-0 z-20 select-text shadow-2xl">
+    <>
+      <div
+        onClick={onClose}
+        className="fixed inset-0 bg-black/50 z-40 backdrop-blur-xs md:hidden"
+      />
+      <aside className="fixed inset-y-0 right-0 z-50 w-[92vw] max-w-[410px] md:static md:w-[410px] h-full bg-[#1e1f20] border-l border-[#2d2e30] flex flex-col shrink-0 md:z-20 select-text shadow-2xl">
       {/* Drawer Header */}
       <div className="px-4 py-3 border-b border-[#2d2e30] flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -744,6 +756,7 @@ export const ClinicalDrawer: React.FC<ClinicalDrawerProps> = ({
           </form>
         )}
       </div>
-    </aside>
+      </aside>
+    </>
   );
 };

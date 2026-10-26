@@ -762,9 +762,9 @@ export function sanitizeJsonString(rawText: string): string {
         continue;
       }
 
-      if (ch === '"') {
+      if (ch === '"' || ch === '”' || ch === '“' || ch === '‟') {
         inString = false;
-        result += ch;
+        result += '"';
         continue;
       }
 
@@ -876,6 +876,7 @@ export function parseAndValidateAIJson(rawInput: string): {
 
     let nodeCount = 0;
     let maxDepth = 0;
+    const lessonRandomSuffix = Math.random().toString(36).slice(2, 7);
 
     const validBadges: SemanticBadgeType[] = [
       'danger',
@@ -961,7 +962,7 @@ export function parseAndValidateAIJson(rawInput: string): {
 
       if (typeof raw === 'string' || typeof raw === 'number') {
         return {
-          id: `node-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${nodeCount}`,
+          id: `node-${Date.now()}-${lessonRandomSuffix}-${nodeCount}`,
           label: String(raw).trim(),
           mastery: 'untested',
         };
@@ -990,8 +991,20 @@ export function parseAndValidateAIJson(rawInput: string): {
 
       const childItems = extractChildrenArray(raw);
 
+      const rawIdStr = raw.id != null ? String(raw.id).trim() : '';
+      const isGenericId =
+        !rawIdStr ||
+        /^(root|c\d+(?:-\d+)*|node(?:-\d+)*|n\d+|item-\d+|branch-\d+|p\d+|l\d+(?:-\d+)*)$/i.test(
+          rawIdStr
+        );
+      const uniqueNodeId = !rawIdStr
+        ? `node-${Date.now()}-${lessonRandomSuffix}-${nodeCount}`
+        : isGenericId
+        ? `${rawIdStr}-${lessonRandomSuffix}`
+        : rawIdStr;
+
       return {
-        id: raw.id || `node-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${nodeCount}`,
+        id: uniqueNodeId,
         label,
         summary: summaryVal ? String(summaryVal).trim() : undefined,
         badge,
@@ -1083,7 +1096,8 @@ export function parseMarkdownToMindmap(rawMarkdown: string): {
 
   const stack: { node: MindmapNode; level: number }[] = [{ node: rootNode, level: 0 }];
 
-  const startIndex = lines[0].startsWith('# ') ? 1 : 0;
+  const startIndex = lines[0].startsWith('#') ? 1 : 0;
+  let lastHeadingLevel = 1;
 
   for (let i = startIndex; i < lines.length; i++) {
     const rawLine = lines[i];
@@ -1099,14 +1113,15 @@ export function parseMarkdownToMindmap(rawMarkdown: string): {
     if (headingMatch) {
       const hashes = headingMatch[1].length;
       targetLevel = Math.max(1, hashes - 1);
+      lastHeadingLevel = targetLevel;
       contentText = headingMatch[2];
     } else if (bulletMatch) {
       const indentSpaces = bulletMatch[1].replace(/\t/g, '  ').length;
       const indentDepth = Math.floor(indentSpaces / 2);
-      targetLevel = 2 + indentDepth;
+      targetLevel = lastHeadingLevel + 1 + indentDepth;
       contentText = bulletMatch[3];
     } else {
-      targetLevel = 2;
+      targetLevel = lastHeadingLevel + 1;
       contentText = trimmed;
     }
 

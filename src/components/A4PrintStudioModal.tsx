@@ -2329,6 +2329,20 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
             </div>
           </div>
         </div>
+
+        <style>{`
+          @page {
+            size: A4 ${isLandscape ? 'landscape' : 'portrait'};
+            margin: 10mm;
+          }
+          @media print {
+            html, body, #root, .fixed {
+              height: auto !important;
+              overflow: visible !important;
+              position: static !important;
+            }
+          }
+        `}</style>
       </div>
     </div>
   );

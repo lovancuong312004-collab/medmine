@@ -10,6 +10,9 @@ import {
   RefreshCw,
   Sun,
   Moon,
+  Menu,
+  Printer,
+  Plus,
 } from 'lucide-react';
 import {
   MedMindDatabase,
@@ -32,6 +35,7 @@ import {
   deleteNodeById,
   findNodeWithContext,
   calculateMasteryStats,
+  parseAndValidateAIJson,
 } from './utils/mindmapLayout';
 import {
   getEffectiveSupabaseConfig,
@@ -103,14 +107,23 @@ export default function App() {
     return getEffectiveSupabaseConfig(null);
   });
 
-  // Load remembered authentication session from LocalStorage
+  // Load remembered authentication session from LocalStorage with strict tokenPassword verification
   const [authRole, setAuthRole] = useState<AuthRole>(() => {
     try {
       const savedAuthRaw = localStorage.getItem(STORAGE_KEY_AUTH_REMEMBER);
       if (savedAuthRaw) {
         const parsedAuth = JSON.parse(savedAuthRaw) as SavedAuthSession;
-        if (parsedAuth.role === 'owner' || parsedAuth.role === 'guest') {
-          return parsedAuth.role;
+        const expectedPass =
+          database.security?.ownerPassword || DEFAULT_OWNER_PASSWORD;
+        if (
+          parsedAuth.role === 'owner' &&
+          Boolean(parsedAuth.tokenPassword) &&
+          parsedAuth.tokenPassword === expectedPass
+        ) {
+          return 'owner';
+        }
+        if (parsedAuth.role === 'guest') {
+          return 'guest';
         }
       }
     } catch {
@@ -123,9 +136,13 @@ export default function App() {
     return database.lessons[0]?.id || 'lesson-cancer-characteristics';
   });
 
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>('cancer-root');
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(() => {
+    return database.lessons[0]?.rootNode?.id || null;
+  });
   const [activeRecallLevel, setActiveRecallLevel] = useState<ActiveRecallLevel>('off');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isMobileClinicalOpen, setIsMobileClinicalOpen] = useState(false);
   const [isZenMode, setIsZenMode] = useState(false);
   const [isImporterOpen, setIsImporterOpen] = useState(false);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
@@ -171,10 +188,15 @@ export default function App() {
     }
   }, [database]);
 
+  const toastTimerRef = useRef<number | null>(null);
   const showToast = useCallback((msg: string) => {
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
     setToastMessage(msg);
-    setTimeout(() => {
+    toastTimerRef.current = window.setTimeout(() => {
       setToastMessage((prev) => (prev === msg ? null : prev));
+      toastTimerRef.current = null;
     }, 3200);
   }, []);
 
@@ -236,7 +258,7 @@ export default function App() {
   const autoPushTimerRef = useRef<number | null>(null);
   const triggerBackgroundCloudPush = useCallback(
     (nextDb: MedMindDatabase, cfg: SupabaseConfig = supabaseConfig) => {
-      if (authRole !== 'owner') return;
+      if (isPullingInitialCloud || authRole !== 'owner') return;
       if (!isSupabaseConfigured(cfg) || !cfg.autoSync) return;
 
       setCloudSyncStatus('syncing');
@@ -253,7 +275,7 @@ export default function App() {
         }
       }, 650);
     },
-    [authRole, supabaseConfig]
+    [isPullingInitialCloud, authRole, supabaseConfig]
   );
 
   /**
@@ -275,8 +297,16 @@ export default function App() {
         setCloudSyncStatus('synced');
 
         setActiveLessonId((prevId) => {
-          const exists = res.database!.lessons.some((l) => l.id === prevId);
-          return exists ? prevId : res.database!.lessons[0]?.id || prevId;
+          const matchedLesson = res.database!.lessons.find((l) => l.id === prevId);
+          if (matchedLesson) {
+            return prevId;
+          }
+          const fallbackLesson = res.database!.lessons[0];
+          if (fallbackLesson) {
+            setSelectedNodeId(fallbackLesson.rootNode?.id || null);
+            return fallbackLesson.id;
+          }
+          return prevId;
         });
 
         try {
@@ -287,8 +317,7 @@ export default function App() {
               res.database.security?.ownerPassword || DEFAULT_OWNER_PASSWORD;
             if (
               parsed.role === 'owner' &&
-              parsed.tokenPassword &&
-              parsed.tokenPassword !== cloudPass
+              (!parsed.tokenPassword || parsed.tokenPassword !== cloudPass)
             ) {
               localStorage.removeItem(STORAGE_KEY_AUTH_REMEMBER);
               setAuthRole('unauthenticated');
@@ -333,7 +362,7 @@ export default function App() {
         setDatabase(res.database);
         if (res.database.lessons[0]) {
           setActiveLessonId(res.database.lessons[0].id);
-          setSelectedNodeId(res.database.lessons[0].rootNode.id);
+          setSelectedNodeId(res.database.lessons[0].rootNode?.id || null);
         }
         setCloudSyncStatus('synced');
         showToast('Đăng nhập Chủ sở hữu & tải dữ liệu mới nhất từ Supabase thành công!');
@@ -370,8 +399,13 @@ export default function App() {
   };
 
   const activeLesson: LessonMindmap = useMemo(() => {
+    if (!Array.isArray(database.lessons) || database.lessons.length === 0) {
+      return INITIAL_MEDMIND_DATA.lessons[0];
+    }
     return (
-      database.lessons.find((l) => l.id === activeLessonId) || database.lessons[0]
+      database.lessons.find((l) => l.id === activeLessonId) ||
+      database.lessons[0] ||
+      INITIAL_MEDMIND_DATA.lessons[0]
     );
   }, [database.lessons, activeLessonId]);
 
@@ -386,12 +420,15 @@ export default function App() {
   );
 
   const masteryStats = useMemo(
-    () => calculateMasteryStats(activeLesson.rootNode),
-    [activeLesson.rootNode]
+    () =>
+      activeLesson?.rootNode
+        ? calculateMasteryStats(activeLesson.rootNode)
+        : { total: 0, mastered: 0, review: 0, untested: 0, percent: 0 },
+    [activeLesson?.rootNode]
   );
 
   const selectedNodeContext = useMemo(() => {
-    if (!selectedNodeId || !activeLesson) return null;
+    if (!selectedNodeId || !activeLesson?.rootNode) return null;
     return findNodeWithContext(activeLesson.rootNode, selectedNodeId);
   }, [activeLesson, selectedNodeId]);
 
@@ -400,11 +437,12 @@ export default function App() {
     updater: (root: MindmapNode) => MindmapNode,
     shouldSyncToCloud = true
   ) => {
+    if (!activeLesson?.id) return;
     setDatabase((prev) => {
       const nextDb: MedMindDatabase = {
         ...prev,
         lessons: prev.lessons.map((lesson) =>
-          lesson.id === activeLesson.id
+          lesson.id === activeLesson?.id
             ? {
                 ...lesson,
                 updatedAt: new Date().toISOString(),
@@ -469,9 +507,9 @@ export default function App() {
 
   const handleDeleteNode = (nodeId: string) => {
     if (isReadOnly) return;
-    if (nodeId === activeLesson.rootNode.id) return;
+    if (nodeId === activeLesson?.rootNode?.id) return;
     updateActiveRootNode((root) => deleteNodeById(root, nodeId), true);
-    setSelectedNodeId(activeLesson.rootNode.id);
+    setSelectedNodeId(activeLesson?.rootNode?.id || null);
     showToast('Đã xóa nhánh khỏi sơ đồ tư duy.');
   };
 
@@ -859,6 +897,10 @@ export default function App() {
           database={database}
           activeLessonId={activeLesson.id}
           isReadOnly={isReadOnly}
+          themeMode={themeMode}
+          isMobileOpen={isMobileSidebarOpen}
+          onCloseMobile={() => setIsMobileSidebarOpen(false)}
+          onLogout={handleLogout}
           onSelectLesson={(id) => {
             setActiveLessonId(id);
             const found = database.lessons.find((l) => l.id === id);
@@ -883,13 +925,23 @@ export default function App() {
         />
       )}
 
-      {/* CENTER WORKSPACE COLUMN */}
-      <div className="flex-1 h-full flex flex-col min-w-0 relative">
+      {/* CENTER WORKSPACE COLUMN — 100% Full-Width on Mobile */}
+      <div className="w-full flex-1 h-full flex flex-col min-w-0 relative">
         {/* Top Context Header (Hidden when Zen Study Mode is active) */}
         {!isZenMode && (
-          <header className="h-14 px-4 bg-[#1e1f20] border-b border-[#2d2e30] flex items-center justify-between gap-3 overflow-hidden shrink-0 z-20">
-            {/* Zone 1: 3-Tier Curriculum Path & Editable Lesson Title */}
+          <header className="h-12 md:h-14 px-3 md:px-4 bg-[#1e1f20] border-b border-[#2d2e30] flex items-center justify-between gap-2 md:gap-3 overflow-hidden shrink-0 z-20">
+            {/* Zone 1: Mobile Hamburger (☰) + 3-Tier Curriculum Path & Editable Lesson Title */}
             <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+              {/* Mobile Slide-Over Sidebar Trigger (☰) */}
+              <button
+                onClick={() => setIsMobileSidebarOpen(true)}
+                title="Mở danh mục bài học"
+                aria-label="Mở danh mục bài học"
+                className="md:hidden w-8 h-8 rounded-lg border border-[#2d2e30] bg-[#131314] hover:bg-[#2d2e30] text-[#8ab4f8] flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+              >
+                <Menu className="w-4 h-4" />
+              </button>
+
               <span
                 title={`${activeSystem?.name || ''} / ${activeSubject?.name || ''}`}
                 className="text-[12px] text-[#9aa0a6] truncate max-w-[180px] xl:max-w-[260px] shrink hidden md:inline"
@@ -906,14 +958,14 @@ export default function App() {
                     }
                     setEditingLessonTitle(false);
                   }}
-                  className="flex items-center gap-1.5 min-w-0"
+                  className="flex items-center gap-1.5 min-w-0 flex-1"
                 >
                   <input
                     type="text"
                     autoFocus
                     value={tempTitle}
                     onChange={(e) => setTempTitle(e.target.value)}
-                    className="bg-[#131314] border border-[#8ab4f8] rounded px-2.5 py-1 text-[14px] font-display font-semibold text-white focus:outline-none w-56 max-w-full"
+                    className="bg-[#131314] border border-[#8ab4f8] rounded px-2.5 py-1 text-[13.5px] font-display font-semibold text-white focus:outline-none w-full max-w-[240px]"
                   />
                   <button
                     type="submit"
@@ -923,10 +975,10 @@ export default function App() {
                   </button>
                 </form>
               ) : (
-                <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+                <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
                   <h2
                     title={activeLesson.title}
-                    className="font-display font-bold text-[14.5px] text-white truncate"
+                    className="font-display font-semibold md:font-bold text-sm md:text-[14.5px] text-white truncate flex-1"
                   >
                     {activeLesson.title}
                   </h2>
@@ -937,7 +989,7 @@ export default function App() {
                         setEditingLessonTitle(true);
                       }}
                       title="Đổi tên bài học"
-                      className="p-1 rounded hover:bg-[#2d2e30] text-[#9aa0a6] hover:text-white transition-colors shrink-0 cursor-pointer"
+                      className="hidden sm:inline-flex p-1 rounded hover:bg-[#2d2e30] text-[#9aa0a6] hover:text-white transition-colors shrink-0 cursor-pointer"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
@@ -946,7 +998,7 @@ export default function App() {
               )}
             </div>
 
-            {/* Zone 2: Clean Unboxed Mastery & Cloud Sync Status */}
+            {/* Zone 2: Clean Unboxed Mastery & Cloud Sync Status (Desktop lg+) */}
             <div className="hidden lg:flex items-center gap-2 text-[12px] text-[#9aa0a6] whitespace-nowrap shrink-0">
               <span className="flex items-center gap-1 text-[#10b981] font-mono">
                 <CheckCircle2 className="w-3.5 h-3.5" />
@@ -980,8 +1032,72 @@ export default function App() {
               </button>
             </div>
 
-            {/* Zone 3: Quick Theme Toggle + Primary Actions + Lock / Logout Button */}
-            <div className="flex items-center gap-2 shrink-0">
+            {/* Zone 3A: MOBILE COMPACT ICON-ONLY ACTIONS (< 768px) — Never clips text */}
+            <div className="flex md:hidden items-center gap-1.5 shrink-0">
+              {/* 1. Theme Toggle Icon Button (☀️ / 🌙) */}
+              <button
+                onClick={() => {
+                  const next = themeMode === 'dark' ? 'light' : 'dark';
+                  setThemeMode(next);
+                  showToast(
+                    next === 'light'
+                      ? '☀️ Chế độ Sáng (Medical Paper Light)'
+                      : '🌙 Chế độ Tối (Dark Studio)'
+                  );
+                }}
+                title={themeMode === 'dark' ? 'Chuyển sang Chế độ Sáng' : 'Chuyển sang Chế độ Tối'}
+                className="w-8 h-8 rounded-lg border border-[#2d2e30] bg-[#131314] hover:bg-[#2d2e30] flex items-center justify-center transition-colors cursor-pointer"
+              >
+                {themeMode === 'light' ? (
+                  <Sun className="w-4 h-4 text-[#f59e0b]" />
+                ) : (
+                  <Moon className="w-4 h-4 text-[#8ab4f8]" />
+                )}
+              </button>
+
+              {/* 2. AI Importer Icon Button (➕) */}
+              {!isReadOnly && (
+                <button
+                  onClick={() => setIsImporterOpen(true)}
+                  title="Nhập bài học mới từ AI"
+                  className="w-8 h-8 rounded-lg bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#131314] flex items-center justify-center shadow-xs transition-colors cursor-pointer"
+                >
+                  <Plus className="w-4 h-4 stroke-[2.5]" />
+                </button>
+              )}
+
+              {/* 3. Clinical Drawer Icon Button (📖) */}
+              <button
+                onClick={() => {
+                  if (!selectedNodeId) {
+                    setSelectedNodeId(activeLesson.rootNode.id);
+                    setIsMobileClinicalOpen(true);
+                  } else {
+                    setIsMobileClinicalOpen((prev) => !prev);
+                  }
+                }}
+                title="Mở Bảng Lâm sàng & Ghi chú của nhánh đang chọn"
+                className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-colors cursor-pointer ${
+                  isMobileClinicalOpen
+                    ? 'bg-[#3f3c5c] border-[#8ab4f8] text-white'
+                    : 'bg-[#131314] border-[#2d2e30] text-[#8ab4f8] hover:bg-[#2d2e30]'
+                }`}
+              >
+                <BookOpen className="w-4 h-4" />
+              </button>
+
+              {/* 4. Print / PDF Studio Icon Button (🖨️) */}
+              <button
+                onClick={() => setIsPrintStudioOpen(true)}
+                title="Mở Print Studio / Xuất PDF A4"
+                className="w-8 h-8 rounded-lg border border-[#2d2e30] bg-[#131314] hover:bg-[#2d2e30] text-[#e3e3e3] flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <Printer className="w-4 h-4 text-[#8ab4f8]" />
+              </button>
+            </div>
+
+            {/* Zone 3B: DESKTOP FULL CONTROLS (>= 768px) */}
+            <div className="hidden md:flex items-center gap-2 shrink-0">
               {/* Quick Light / Dark Theme Switcher Button */}
               <button
                 onClick={() => {
@@ -1061,7 +1177,7 @@ export default function App() {
           </header>
         )}
 
-        {/* Interactive 6-Mode Mindmap Canvas with Fixed h-11 Sub-Header & Zen Mode */}
+        {/* Interactive 6-Mode Mindmap Canvas with Fixed Sub-Header & Zen Mode */}
         <MindmapCanvas
           rootNode={activeLesson.rootNode}
           selectedNodeId={selectedNodeId}
@@ -1099,19 +1215,26 @@ export default function App() {
         )}
       </div>
 
-      {/* RIGHT MEDICAL CLINICAL DRAWER */}
+      {/* RIGHT MEDICAL CLINICAL DRAWER (Desktop docked; Mobile slide-over when toggled) */}
       {selectedNodeContext && !isZenMode && (
-        <ClinicalDrawer
-          node={selectedNodeContext.node}
-          depth={selectedNodeContext.depth}
-          breadcrumb={selectedNodeContext.breadcrumb}
-          isReadOnly={isReadOnly}
-          onClose={() => setSelectedNodeId(null)}
-          onSelectBreadcrumbNode={(id) => setSelectedNodeId(id)}
-          onUpdateNode={handleUpdateNode}
-          onAddChildNode={handleAddChildFromDrawer}
-          onDeleteNode={handleDeleteNode}
-        />
+        <div className={isMobileClinicalOpen ? 'contents' : 'hidden md:contents'}>
+          <ClinicalDrawer
+            node={selectedNodeContext.node}
+            depth={selectedNodeContext.depth}
+            breadcrumb={selectedNodeContext.breadcrumb}
+            isReadOnly={isReadOnly}
+            onClose={() => {
+              setIsMobileClinicalOpen(false);
+              if (typeof window !== 'undefined' && window.innerWidth >= 768) {
+                setSelectedNodeId(null);
+              }
+            }}
+            onSelectBreadcrumbNode={(id) => setSelectedNodeId(id)}
+            onUpdateNode={handleUpdateNode}
+            onAddChildNode={handleAddChildFromDrawer}
+            onDeleteNode={handleDeleteNode}
+          />
+        </div>
       )}
 
       {/* 3-TAB AI IMPORTER MODAL (Owner only) */}
@@ -1141,11 +1264,14 @@ export default function App() {
             setDatabase(newDb);
             if (newDb.lessons[0]) {
               setActiveLessonId(newDb.lessons[0].id);
-              setSelectedNodeId(newDb.lessons[0].rootNode.id);
+              setSelectedNodeId(newDb.lessons[0].rootNode?.id || null);
             }
           }}
           onUpdateSecuritySettings={handleUpdateSecuritySettings}
           onMergeSampleData={handleMergeSampleData}
+          onUnlockOwnerFromGuest={(usedPassword) => {
+            handleOwnerLoginSuccess(true, usedPassword);
+          }}
           onClose={() => setIsCloudModalOpen(false)}
         />
       )}

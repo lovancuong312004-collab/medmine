@@ -67,7 +67,7 @@ export const AIImporterModal: React.FC<AIImporterModalProps> = ({
   const handleSystemChange = (sysId: string) => {
     setSelectedSystemId(sysId);
     const firstSub = subjects.find((s) => s.systemId === sysId);
-    if (firstSub) setSelectedSubjectId(firstSub.id);
+    setSelectedSubjectId(firstSub ? firstSub.id : '');
   };
 
   const handleCopyPrompt = () => {
@@ -398,7 +398,10 @@ export const AIImporterModal: React.FC<AIImporterModalProps> = ({
                   Dán danh sách Markdown thụt đầu dòng (<code className="text-[#8ab4f8]"># Cấp 0</code>, <code className="text-[#8ab4f8]">## Cấp 1</code>, <code className="text-[#8ab4f8]">- Cấp 2</code>, <code className="text-[#8ab4f8]">  - Cấp 3</code>). Thêm <code className="text-[#ef4444]">[danger]</code>, <code className="text-[#10b981]">[treatment]</code>, <code className="text-[#3b82f6]">[diagnostic]</code>, <code className="text-[#a855f7]">[mechanism]</code> ở cuối dòng để tự động gắn nhãn màu.
                 </p>
                 <button
-                  onClick={() => setMarkdownInput(SAMPLE_MARKDOWN_IMPORT)}
+                  onClick={() => {
+                    setMarkdownInput(SAMPLE_MARKDOWN_IMPORT);
+                    setValidationMessage(null);
+                  }}
                   className="px-3 py-1.5 rounded-lg bg-[#2d2e30] hover:bg-[#3c4043] text-[11.5px] font-medium text-[#8ab4f8] flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer"
                 >
                   <Wand2 className="w-3.5 h-3.5" />
@@ -409,10 +412,30 @@ export const AIImporterModal: React.FC<AIImporterModalProps> = ({
               <textarea
                 rows={12}
                 value={markdownInput}
-                onChange={(e) => setMarkdownInput(e.target.value)}
+                onChange={(e) => {
+                  setMarkdownInput(e.target.value);
+                  setValidationMessage(null);
+                }}
                 placeholder={`# Tên Bệnh Lý (Cấp 0)\n## 1. Cơ chế bệnh sinh (Cấp 1)\n- Nhóm nguyên nhân chính (Cấp 2)\n  - Chi tiết cơ chế phân tử [mechanism] (Cấp 3)\n  - Dấu hiệu cờ đỏ nguy kịch [danger] (Cấp 3)`}
                 className="w-full bg-[#131314] border border-[#3c4043] focus:border-[#8ab4f8] rounded-xl p-4 font-mono text-[12px] text-[#e3e3e3] focus:outline-none leading-relaxed"
               />
+
+              {validationMessage && (
+                <div
+                  className={`p-3 rounded-xl border flex items-center gap-2.5 text-[12.5px] ${
+                    validationMessage.type === 'success'
+                      ? 'bg-[#10b981]/10 border-[#10b981]/40 text-[#81c995]'
+                      : 'bg-[#ef4444]/10 border-[#ef4444]/40 text-[#f28b82]'
+                  }`}
+                >
+                  {validationMessage.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                  )}
+                  <span>{validationMessage.text}</span>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-3 pt-2">
                 <button

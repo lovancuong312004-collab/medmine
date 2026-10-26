@@ -38,6 +38,7 @@ interface CloudSyncModalProps {
   onReplaceDatabase: (newDb: MedMindDatabase) => void;
   onUpdateSecuritySettings: (newSecurity: SecuritySettings) => void;
   onMergeSampleData: () => void;
+  onUnlockOwnerFromGuest?: (usedPassword: string) => Promise<void> | void;
   onClose: () => void;
 }
 
@@ -65,6 +66,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   onReplaceDatabase,
   onUpdateSecuritySettings,
   onMergeSampleData,
+  onUnlockOwnerFromGuest,
   onClose,
 }) => {
   const [activeTab, setActiveTab] = useState<'theme' | 'cloud' | 'security'>('theme');
@@ -73,13 +75,17 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   const [tableName, setTableName] = useState(config.tableName || 'medmind_store');
   const [autoSync, setAutoSync] = useState<boolean>(config.autoSync);
 
-  // Security states
+  // Security states — NEVER prefill or expose current ownerPassword in plain text!
   const currentSecurity = database.security || {
     ownerPassword: DEFAULT_OWNER_PASSWORD,
     allowGuestMode: true,
   };
-  const [newPassword, setNewPassword] = useState(currentSecurity.ownerPassword);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [allowGuest, setAllowGuest] = useState(currentSecurity.allowGuestMode);
+
+  // Guest -> Owner inline unlock input
+  const [guestUnlockPassword, setGuestUnlockPassword] = useState('');
 
   const [statusMsg, setStatusMsg] = useState<{
     type: 'success' | 'error' | 'info';
@@ -187,25 +193,91 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   const handleSaveSecurity = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isReadOnly) return;
-    if (!newPassword.trim()) {
+
+    const trimmedNew = newPassword.trim();
+    const trimmedConfirm = confirmPassword.trim();
+
+    if (!trimmedNew) {
       setStatusMsg({
         type: 'error',
-        text: 'Mật khẩu Chủ sở hữu không được để trống.',
+        text: 'Vui lòng nhập mật khẩu mới để cập nhật.',
+      });
+      return;
+    }
+
+    if (trimmedNew.length < 4) {
+      setStatusMsg({
+        type: 'error',
+        text: 'Mật khẩu Chủ sở hữu phải có ít nhất 4 ký tự.',
+      });
+      return;
+    }
+
+    if (trimmedNew !== trimmedConfirm) {
+      setStatusMsg({
+        type: 'error',
+        text: 'Xác nhận mật khẩu mới không khớp. Vui lòng kiểm tra lại.',
       });
       return;
     }
 
     const updatedSecurity: SecuritySettings = {
-      ownerPassword: newPassword.trim(),
+      ownerPassword: trimmedNew,
       allowGuestMode: allowGuest,
       updatedAt: new Date().toISOString(),
     };
 
     onUpdateSecuritySettings(updatedSecurity);
+    setNewPassword('');
+    setConfirmPassword('');
     setStatusMsg({
       type: 'success',
       text: 'Đã cập nhật Mật khẩu Chủ sở hữu và quyền truy cập Khách (đã đồng bộ lên Cloud nếu bật Auto-Sync)!',
     });
+  };
+
+  const handleToggleAllowGuestOnly = (checked: boolean) => {
+    if (isReadOnly) return;
+    setAllowGuest(checked);
+    const updatedSecurity: SecuritySettings = {
+      ownerPassword: currentSecurity.ownerPassword,
+      allowGuestMode: checked,
+      updatedAt: new Date().toISOString(),
+    };
+    onUpdateSecuritySettings(updatedSecurity);
+    setStatusMsg({
+      type: 'success',
+      text: checked
+        ? 'Đã bật cho phép Chế độ Khách (Read-Only).'
+        : 'Đã tắt Chế độ Khách (Chỉ Chủ sở hữu có mật khẩu mới vào được).',
+    });
+  };
+
+  const handleGuestUnlockSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = guestUnlockPassword.trim();
+    if (!trimmed) {
+      setStatusMsg({
+        type: 'error',
+        text: 'Vui lòng nhập Mật khẩu Chủ sở hữu.',
+      });
+      return;
+    }
+    if (trimmed !== currentSecurity.ownerPassword) {
+      setStatusMsg({
+        type: 'error',
+        text: 'Mật khẩu Chủ sở hữu không chính xác.',
+      });
+      return;
+    }
+    setGuestUnlockPassword('');
+    setStatusMsg({
+      type: 'success',
+      text: 'Đã mở khóa quyền Chủ sở hữu (Full Access) thành công!',
+    });
+    if (onUnlockOwnerFromGuest) {
+      await onUnlockOwnerFromGuest(trimmed);
+    }
   };
 
   return (
@@ -487,34 +559,76 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                 </p>
               </div>
             </div>
+          ) : isReadOnly ? (
+            /* GUEST MODE ISOLATION GATE FOR TAB 2 (SUPABASE) & TAB 3 (SECURITY) */
+            <form
+              onSubmit={handleGuestUnlockSubmit}
+              className="p-6 rounded-2xl bg-[#131314] border border-[#2d2e30] space-y-4 text-center max-w-md mx-auto my-2"
+            >
+              <div className="w-12 h-12 rounded-2xl bg-[#f59e0b]/15 border border-[#f59e0b]/40 flex items-center justify-center mx-auto text-[#f59e0b]">
+                <Lock className="w-6 h-6" />
+              </div>
+              <div className="space-y-1.5">
+                <h3 className="font-display font-bold text-[15px] text-white">
+                  🔒 Khu vực dành riêng cho Chủ sở hữu
+                </h3>
+                <p className="text-[12.5px] text-[#9aa0a6] leading-relaxed">
+                  🔒 Khu vực dành riêng cho Chủ sở hữu. Vui lòng nhập Mật khẩu Chủ sở hữu để mở khóa quyền Quản trị.
+                </p>
+              </div>
+
+              <div className="text-left space-y-1.5">
+                <label className="block text-[11.5px] font-medium text-[#9aa0a6]">
+                  Mật khẩu Chủ sở hữu:
+                </label>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  value={guestUnlockPassword}
+                  onChange={(e) => {
+                    setGuestUnlockPassword(e.target.value);
+                    setStatusMsg(null);
+                  }}
+                  placeholder="••••••••"
+                  className="w-full bg-[#1e1f20] border border-[#3c4043] focus:border-[#8ab4f8] rounded-xl px-3.5 py-2.5 text-[13.5px] font-mono text-white focus:outline-none"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 px-4 rounded-xl bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#131314] font-display font-bold text-[13px] flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <Shield className="w-4 h-4" />
+                <span>Mở khóa quyền Chủ sở hữu</span>
+              </button>
+            </form>
           ) : activeTab === 'cloud' ? (
             <>
               <div className="grid grid-cols-1 gap-3">
                 <div>
                   <label className="block text-[11.5px] font-medium text-[#9aa0a6] mb-1">
-                    Supabase Project URL (Cũng có thể điền sẵn vào hằng số <code className="text-[#8ab4f8]">DEFAULT_SUPABASE_URL</code> trong <code className="text-[#8ab4f8]">src/utils/supabaseSync.ts</code>):
+                    Supabase Project URL:
                   </label>
                   <input
                     type="text"
-                    disabled={isReadOnly}
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
                     placeholder="https://xyzcompany.supabase.co"
-                    className="w-full bg-[#131314] border border-[#3c4043] focus:border-[#8ab4f8] rounded-xl px-3.5 py-2 text-[12.5px] text-white font-mono focus:outline-none disabled:opacity-50"
+                    className="w-full bg-[#131314] border border-[#3c4043] focus:border-[#8ab4f8] rounded-xl px-3.5 py-2 text-[12.5px] text-white font-mono focus:outline-none"
                   />
                 </div>
 
                 <div>
                   <label className="block text-[11.5px] font-medium text-[#9aa0a6] mb-1">
-                    Supabase Anon / Public API Key (<code className="text-[#8ab4f8]">DEFAULT_SUPABASE_ANON_KEY</code>):
+                    Supabase Anon / Public API Key:
                   </label>
                   <input
                     type="password"
-                    disabled={isReadOnly}
+                    autoComplete="off"
                     value={anonKey}
                     onChange={(e) => setAnonKey(e.target.value)}
-                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                    className="w-full bg-[#131314] border border-[#3c4043] focus:border-[#8ab4f8] rounded-xl px-3.5 py-2 text-[12.5px] text-white font-mono focus:outline-none disabled:opacity-50"
+                    placeholder="••••••••"
+                    className="w-full bg-[#131314] border border-[#3c4043] focus:border-[#8ab4f8] rounded-xl px-3.5 py-2 text-[12.5px] text-white font-mono focus:outline-none"
                   />
                 </div>
 
@@ -525,20 +639,17 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                     </label>
                     <input
                       type="text"
-                      disabled={isReadOnly}
                       value={tableName}
                       onChange={(e) => setTableName(e.target.value)}
-                      className="w-full bg-[#131314] border border-[#3c4043] focus:border-[#8ab4f8] rounded-xl px-3.5 py-2 text-[12.5px] text-white font-mono focus:outline-none disabled:opacity-50"
+                      className="w-full bg-[#131314] border border-[#3c4043] focus:border-[#8ab4f8] rounded-xl px-3.5 py-2 text-[12.5px] text-white font-mono focus:outline-none"
                     />
                   </div>
 
                   {/* Auto-Sync Toggle */}
                   <div className="pt-4">
                     <label
-                      onClick={() => !isReadOnly && setAutoSync(!autoSync)}
-                      className={`p-2.5 rounded-xl bg-[#131314] border border-[#3c4043] flex items-center justify-between cursor-pointer ${
-                        isReadOnly ? 'opacity-50 cursor-not-allowed' : 'hover:border-[#8ab4f8]'
-                      }`}
+                      onClick={() => setAutoSync(!autoSync)}
+                      className="p-2.5 rounded-xl bg-[#131314] border border-[#3c4043] hover:border-[#8ab4f8] flex items-center justify-between cursor-pointer"
                     >
                       <div className="flex items-center gap-2">
                         <RefreshCw
@@ -559,7 +670,6 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                         type="checkbox"
                         checked={autoSync}
                         onChange={(e) => setAutoSync(e.target.checked)}
-                        disabled={isReadOnly}
                         className="accent-[#8ab4f8] w-4 h-4"
                       />
                     </label>
@@ -570,16 +680,15 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               {/* Sync Action Buttons */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2">
                 <button
-                  disabled={isReadOnly}
                   onClick={handleSaveSettings}
-                  className="py-2.5 px-3 rounded-xl bg-[#2d2e30] hover:bg-[#3c4043] text-[12.5px] font-medium text-white flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                  className="py-2.5 px-3 rounded-xl bg-[#2d2e30] hover:bg-[#3c4043] text-[12.5px] font-medium text-white flex items-center justify-center gap-2 transition-colors cursor-pointer"
                 >
                   <Database className="w-4 h-4 text-[#8ab4f8]" />
                   <span>Lưu Cấu hình</span>
                 </button>
 
                 <button
-                  disabled={isSyncing || isReadOnly}
+                  disabled={isSyncing}
                   onClick={handlePushToSupabase}
                   className="py-2.5 px-3 rounded-xl bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#131314] font-display font-semibold text-[12.5px] flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
                 >
@@ -621,34 +730,50 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               </div>
             </>
           ) : (
-            /* TAB 3: SECURITY & OWNER PASSWORD SETTINGS */
+            /* TAB 3: SECURITY & OWNER PASSWORD SETTINGS (OWNER ONLY) */
             <form onSubmit={handleSaveSecurity} className="space-y-4">
-              {isReadOnly && (
-                <div className="p-3 rounded-xl bg-[#f59e0b]/10 border border-[#f59e0b]/40 text-[#fdd663] text-[12px]">
-                  Bạn đang ở chế độ Khách (Chỉ đọc). Vui lòng đăng nhập bằng mật khẩu Chủ sở hữu để thay đổi cài đặt bảo mật.
-                </div>
-              )}
-
               <div className="p-4 rounded-xl bg-[#131314] border border-[#2d2e30] space-y-3">
                 <div>
                   <label className="flex items-center gap-1.5 text-[12.5px] font-display font-semibold text-white mb-1">
                     <Lock className="w-4 h-4 text-[#8ab4f8]" />
-                    <span>Mật khẩu / Mã PIN Chủ sở hữu (Mặc định: y6medmind)</span>
+                    <span>Đổi mật khẩu Chủ sở hữu</span>
                   </label>
-                  <p className="text-[11.5px] text-[#9aa0a6] mb-2">
-                    Mật khẩu này dùng để mở khóa toàn quyền Thêm/Sửa/Xóa bài học và tự động đồng bộ cùng kho dữ liệu lên Supabase.
+                  <p className="text-[11.5px] text-[#9aa0a6] mb-3">
+                    Mật khẩu hiện tại luôn được ẩn bảo mật. Nhập mật khẩu mới (tối thiểu 4 ký tự) vào 2 ô bên dưới nếu bạn muốn thay đổi mật khẩu Chủ sở hữu:
                   </p>
-                  <input
-                    type="text"
-                    disabled={isReadOnly}
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="Nhập mật khẩu chủ sở hữu mới..."
-                    className="w-full bg-[#1e1f20] border border-[#3c4043] focus:border-[#8ab4f8] rounded-xl px-3.5 py-2 text-[13px] font-mono text-white focus:outline-none disabled:opacity-50"
-                  />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-medium text-[#9aa0a6] mb-1">
+                        Nhập mật khẩu mới:
+                      </label>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full bg-[#1e1f20] border border-[#3c4043] focus:border-[#8ab4f8] rounded-xl px-3.5 py-2 text-[13px] font-mono text-white focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-medium text-[#9aa0a6] mb-1">
+                        Xác nhận mật khẩu mới:
+                      </label>
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full bg-[#1e1f20] border border-[#3c4043] focus:border-[#8ab4f8] rounded-xl px-3.5 py-2 text-[13px] font-mono text-white focus:outline-none"
+                      />
+                    </div>
+                  </div>
                 </div>
 
-                <div className="pt-2 border-t border-[#2d2e30]">
+                <div className="pt-3 border-t border-[#2d2e30]">
                   <label className="flex items-center justify-between gap-3 cursor-pointer">
                     <div className="space-y-0.5">
                       <span className="flex items-center gap-1.5 text-[12.5px] font-display font-semibold text-white">
@@ -661,9 +786,8 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                     </div>
                     <input
                       type="checkbox"
-                      disabled={isReadOnly}
                       checked={allowGuest}
-                      onChange={(e) => setAllowGuest(e.target.checked)}
+                      onChange={(e) => handleToggleAllowGuestOnly(e.target.checked)}
                       className="accent-[#81c995] w-4 h-4 shrink-0"
                     />
                   </label>
@@ -682,7 +806,6 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                 </div>
                 <button
                   type="button"
-                  disabled={isReadOnly}
                   onClick={() => {
                     onMergeSampleData();
                     setStatusMsg({
@@ -690,7 +813,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                       text: 'Đã gộp thêm các bài học mẫu bị thiếu (Giữ nguyên 100% bài học hiện có của bạn)!',
                     });
                   }}
-                  className="px-3.5 py-2 rounded-xl bg-[#2d2e30] hover:bg-[#3c4043] border border-[#3c4043] text-[12px] font-medium text-[#8ab4f8] hover:text-white shrink-0 transition-colors cursor-pointer disabled:opacity-50"
+                  className="px-3.5 py-2 rounded-xl bg-[#2d2e30] hover:bg-[#3c4043] border border-[#3c4043] text-[12px] font-medium text-[#8ab4f8] hover:text-white shrink-0 transition-colors cursor-pointer"
                 >
                   ➕ Khôi phục thêm bài mẫu (Không xóa bài hiện có)
                 </button>
@@ -699,10 +822,9 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               <div className="flex justify-end">
                 <button
                   type="submit"
-                  disabled={isReadOnly}
-                  className="px-5 py-2.5 rounded-xl bg-[#81c995] hover:bg-[#a8dab5] text-[#131314] font-display font-semibold text-[13px] transition-colors cursor-pointer disabled:opacity-50"
+                  className="px-5 py-2.5 rounded-xl bg-[#81c995] hover:bg-[#a8dab5] text-[#131314] font-display font-semibold text-[13px] transition-colors cursor-pointer"
                 >
-                  Lưu Cài đặt Bảo mật & Đồng bộ
+                  Cập nhật Mật khẩu Mới
                 </button>
               </div>
             </form>

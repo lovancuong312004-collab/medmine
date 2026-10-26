@@ -13,6 +13,7 @@
     color: #e3e3e3;
     overflow: hidden;
     user-select: none;
+    -webkit-tap-highlight-color: transparent;
   }
 
   h1, h2, h3, h4, .font-display {
@@ -87,10 +88,13 @@
 .theme-light :not(.a4-print-sheet):not(.a4-print-sheet *) {
   /* Remap Dark Studio surfaces to Crisp Medical Paper Light surfaces */
   &.bg-\[\#131314\],
+  &.bg-\[\#131314\]\/60,
+  &.bg-\[\#131314\]\/80,
   &.bg-\[\#141517\],
   &.bg-\[\#141518\],
   &.bg-\[\#161718\],
-  &.bg-\[\#16171a\] {
+  &.bg-\[\#16171a\],
+  &.bg-\[\#18191a\] {
     background-color: #f8fafc !important;
   }
 
@@ -110,11 +114,15 @@
   &.bg-\[\#242528\],
   &.bg-\[\#242529\],
   &.bg-\[\#26272b\],
-  &.bg-\[\#2d2e30\] {
+  &.bg-\[\#2d2e30\],
+  &.bg-\[\#2d2e30\]\/70 {
     background-color: #f1f5f9 !important;
   }
 
-  &.bg-\[\#3f3c5c\] {
+  &.bg-\[\#3f3c5c\],
+  &.bg-\[\#3f3c5c\]\/55,
+  &.bg-\[\#3f3c5c\]\/80,
+  &.bg-\[\#3f3c5c\]\/90 {
     background-color: #eff6ff !important;
   }
 
@@ -137,7 +145,8 @@
   &:not([data-keep-white="true"]).text-\[\#e8eaed\],
   &:not([data-keep-white="true"]).text-\[\#f1f3f4\],
   &:not([data-keep-white="true"]).text-\[\#f1f5f9\],
-  &:not([data-keep-white="true"]).text-\[\#e2e8f0\] {
+  &:not([data-keep-white="true"]).text-\[\#e2e8f0\],
+  &:not([data-keep-white="true"]).text-\[\#d2d5d9\] {
     color: #0f172a !important;
   }
 
@@ -171,3 +180,17 @@
     color: #7c3aed !important;
   }
 }
+
+@media print {
+  html,
+  body,
+  #root {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    position: static !important;
+    background-color: #ffffff !important;
+    color: #111827 !important;
+  }
+}
+

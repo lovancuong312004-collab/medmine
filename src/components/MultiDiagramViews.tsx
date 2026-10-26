@@ -467,7 +467,7 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
             }
           : undefined
       }
-      className="w-full h-full overflow-y-auto pt-5 pb-14 px-4 md:px-8 select-text bg-[#141517]"
+      className="w-full h-full overflow-y-auto pt-3 md:pt-5 pb-24 md:pb-14 px-3 md:px-8 select-text bg-[#141517]"
     >
       <div className="max-w-6xl mx-auto bg-[#1b1c1f] border border-[#3c4043] rounded-2xl shadow-xl overflow-hidden">
         {/* Compact Top Notebook Title Banner */}
@@ -476,11 +476,11 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
           className="px-5 py-3 bg-[#242529] border-b border-[#3c4043] flex flex-col sm:flex-row sm:items-center justify-between gap-2 cursor-pointer"
         >
           <div className="min-w-0">
-            <h1 className="font-display font-bold text-[16.5px] text-white truncate">
+            <h1 className={`font-display font-bold text-[16.5px] truncate ${isLight ? 'text-blue-950' : 'text-white'}`}>
               {rootNode.label}
             </h1>
             {rootNode.summary && (
-              <p className="text-[12px] text-[#b8bdc2] mt-0.5">{rootNode.summary}</p>
+              <p className={`text-[12px] mt-0.5 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>{rootNode.summary}</p>
             )}
           </div>
 
@@ -1098,11 +1098,11 @@ export const FishboneDiagramView: React.FC<
             }}
             className="w-[305px] px-4 py-3 rounded-r-[26px] rounded-l-[12px] shadow-xl cursor-pointer transition-colors"
           >
-            <div className="font-display font-bold text-[15px] text-white leading-snug">
+            <div className={`font-display font-bold text-[15px] leading-snug ${isLight ? 'text-blue-950' : 'text-white'}`}>
               {rootNode.label}
             </div>
             {rootNode.summary && (
-              <p className="text-[11.5px] text-[#e3e3e3]/90 mt-1 pt-1 border-t border-[#3c4043]/40 leading-snug">
+              <p className={`text-[11.5px] mt-1 pt-1 border-t leading-snug ${isLight ? 'text-slate-700 border-blue-200' : 'text-slate-300 border-[#3c4043]/40'}`}>
                 {rootNode.summary}
               </p>
             )}
@@ -1209,7 +1209,7 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
                         {badgeMeta.dot} {badgeMeta.shortLabel}
                       </span>
                     )}
-                    <span className="text-[12.5px] text-[#e8eaed] leading-snug">
+                    <span className={`text-[12.5px] leading-snug ${isLight ? 'text-slate-800' : 'text-[#e8eaed]'}`}>
                       {item.label}
                     </span>
                   </div>
@@ -1246,19 +1246,23 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
   };
 
   return (
-    <div className="w-full h-full overflow-y-auto pt-5 pb-14 px-4 md:px-6 select-text">
+    <div className="w-full h-full overflow-y-auto pt-3 md:pt-5 pb-24 md:pb-14 px-3 md:px-6 select-text">
       <div className="max-w-[1600px] mx-auto space-y-3">
         {/* Compact Slim Title Header (py-2.5) */}
         <div
           onClick={() => onSelectNode(rootNode.id)}
-          className="px-4 py-2.5 rounded-xl bg-[#3f3c5c] border border-[#8ab4f8] flex items-center justify-between gap-3 cursor-pointer shadow-sm"
+          className={`px-4 py-2.5 rounded-xl border flex items-center justify-between gap-3 cursor-pointer shadow-sm ${
+            isLight
+              ? 'bg-blue-50 border-blue-400'
+              : 'bg-[#3f3c5c] border-[#8ab4f8]'
+          }`}
         >
           <div className="flex items-center gap-3 min-w-0">
-            <h1 className="font-display font-bold text-[15.5px] text-white truncate">
+            <h1 className={`font-display font-bold text-[15.5px] truncate ${isLight ? 'text-blue-950' : 'text-white'}`}>
               {rootNode.label}
             </h1>
             {rootNode.summary && (
-              <span className="text-[12px] text-[#e3e3e3]/80 truncate hidden lg:inline">
+              <span className={`text-[12px] truncate hidden lg:inline ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
                 — {rootNode.summary}
               </span>
             )}
@@ -1278,8 +1282,155 @@ export const ClinicalMatrixTableView: React.FC<SharedDiagramViewProps> = ({
           )}
         </div>
 
-        {/* Clinical Matrix Table */}
-        <div className="rounded-2xl border border-[#3c4043] bg-[#1b1c1f] shadow-xl overflow-x-auto">
+        {/* MOBILE 1-COLUMN VERTICAL COMPARISON STACK (<768px) */}
+        <div className="md:hidden flex flex-col gap-3.5">
+          {pillars.map((pillar, idx) => {
+            const pillarIndex = idx + 1;
+            const lightPal =
+              LIGHT_BRANCH_PALETTES[idx % LIGHT_BRANCH_PALETTES.length];
+            const accentColor = isLight
+              ? lightPal.accent
+              : pillar.accentColor ||
+                LEVEL1_PILLAR_ACCENTS[idx % LEVEL1_PILLAR_ACCENTS.length];
+            const directCount = getDirectChildrenCount(pillar);
+            const isCollapsed = Boolean(pillar.collapsed);
+            const showPillarNum = !hasLeadingNumberPrefix(pillar.label);
+            const visibleLvl2 =
+              !isCollapsed && pillar.children && pillar.children.length > 0
+                ? pillar.children
+                : [];
+
+            return (
+              <div
+                key={`mob-matrix-${pillar.id}`}
+                style={{ borderTop: `3.5px solid ${accentColor}` }}
+                className="rounded-xl border border-[#3c4043] bg-[#1b1c1f] shadow-md overflow-hidden"
+              >
+                {/* Pillar Header */}
+                <div
+                  onClick={() => onSelectNode(pillar.id)}
+                  style={{
+                    backgroundColor: isLight ? lightPal.bg : '#242529',
+                  }}
+                  className="px-3.5 py-2.5 border-b border-[#3c4043] flex items-start justify-between gap-2 cursor-pointer"
+                >
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-display font-bold text-[14.5px] text-white leading-snug">
+                      {showPillarNum && (
+                        <span
+                          style={{ color: accentColor }}
+                          className="font-mono font-bold mr-1"
+                        >
+                          {pillarIndex}.
+                        </span>
+                      )}
+                      <span>{pillar.label}</span>
+                    </h3>
+                    {pillar.summary && (
+                      <p className="text-[12px] text-[#b0b5ba] mt-0.5 leading-snug">
+                        {pillar.summary}
+                      </p>
+                    )}
+                  </div>
+                  {directCount > 0 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleCollapse(pillar.id);
+                      }}
+                      className="px-2 py-0.5 rounded bg-[#2d2e30] border border-[#4b5056] text-[10.5px] font-mono text-white shrink-0"
+                    >
+                      {isCollapsed ? `+${directCount}` : 'Thu gọn'}
+                    </button>
+                  )}
+                </div>
+
+                {/* Level 2 Subgroups Stacked Vertically */}
+                {visibleLvl2.length > 0 ? (
+                  <div className="divide-y divide-[#3c4043]">
+                    {visibleLvl2.map((lvl2) => {
+                      const lvl2Badge = lvl2.badge
+                        ? SEMANTIC_BADGE_CONFIG[lvl2.badge]
+                        : null;
+                      const highlights = extractNodeClinicalHighlights(lvl2);
+                      const lvl2Blurred = isNodeDepthBlurred(lvl2.id, 2);
+
+                      return (
+                        <div
+                          key={lvl2.id}
+                          onClick={() => {
+                            if (activeRecallLevel !== 'off') onRevealNode(lvl2.id);
+                            onSelectNode(lvl2.id);
+                          }}
+                          className={`p-3 space-y-2 ${
+                            lvl2Blurred ? 'blur-[5px] opacity-55 select-none' : ''
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="font-display font-bold text-[13.5px] text-white leading-snug">
+                              {showBadges && lvl2Badge && (
+                                <span
+                                  style={{
+                                    color: lvl2Badge.color,
+                                    backgroundColor: lvl2Badge.bgColor,
+                                  }}
+                                  className="inline-block mr-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                                >
+                                  {lvl2Badge.dot} {lvl2Badge.shortLabel}
+                                </span>
+                              )}
+                              {lvl2.label}
+                            </div>
+                          </div>
+
+                          {!lvl2.collapsed &&
+                            lvl2.children &&
+                            lvl2.children.length > 0 && (
+                              <div className="pl-1">
+                                {renderLevel3DetailsList(
+                                  lvl2.children,
+                                  3,
+                                  accentColor
+                                )}
+                              </div>
+                            )}
+
+                          {highlights.length > 0 && (
+                            <div className="pt-1 space-y-1">
+                              {highlights.map((h, hIdx) => (
+                                <div
+                                  key={hIdx}
+                                  className="p-2 rounded-lg bg-[#141518] border border-[#2d2e30] text-[11.5px] text-[#d1d5db] leading-snug"
+                                >
+                                  <strong
+                                    style={{ color: accentColor }}
+                                    className="mr-1"
+                                  >
+                                    ★ Trọng tâm:
+                                  </strong>
+                                  <span>{h.text}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-3 text-[12px] text-[#9aa0a6]">
+                    {isCollapsed
+                      ? `Đang ẩn +${directCount} phân nhóm Cấp 2. Chạm để mở.`
+                      : 'Chưa có phân nhóm Cấp 2.'}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* DESKTOP 4-COLUMN CLINICAL MATRIX TABLE (>=768px) */}
+        <div className="hidden md:block rounded-2xl border border-[#3c4043] bg-[#1b1c1f] shadow-xl overflow-x-auto">
           <table className="w-full border-collapse text-left">
             <thead>
               <tr className="bg-[#242529] border-b-2 border-[#3c4043] text-[11px] font-display font-bold uppercase tracking-wider text-[#9aa0a6]">
