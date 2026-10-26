@@ -2,7 +2,6 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   X,
   Printer,
-  Download,
   FileText,
   Columns,
   Edit3,
@@ -199,15 +198,32 @@ function renderPrintableKeywordText(
 function collectCompiledDocumentStyles(): string {
   const chunks: string[] = [];
   try {
-    const styleNodes = document.querySelectorAll('style, link[rel="stylesheet"]');
-    styleNodes.forEach((node) => {
-      if (node.tagName.toLowerCase() === 'style') {
-        chunks.push(`<style>${node.innerHTML}</style>`);
-      } else if (node.tagName.toLowerCase() === 'link') {
-        const href = (node as HTMLLinkElement).href;
-        if (href) {
-          chunks.push(`<link rel="stylesheet" href="${href}" />`);
+    // 1. Extract live CSS rules from all same-origin stylesheets so the iframe renders in 0ms
+    const inlineRules: string[] = [];
+    Array.from(document.styleSheets).forEach((sheet) => {
+      try {
+        const rules = sheet.cssRules || sheet.rules;
+        if (rules) {
+          Array.from(rules).forEach((rule) => {
+            inlineRules.push(rule.cssText);
+          });
         }
+      } catch {
+        // Cross-origin stylesheet fallback
+        if (sheet.href) {
+          chunks.push(`<link rel="stylesheet" href="${sheet.href}" />`);
+        }
+      }
+    });
+    if (inlineRules.length > 0) {
+      chunks.push(`<style>${inlineRules.join('\n')}</style>`);
+    }
+
+    // 2. Also include any inline <style> tags as backup
+    const styleNodes = document.querySelectorAll('style');
+    styleNodes.forEach((node) => {
+      if (node.innerHTML) {
+        chunks.push(`<style>${node.innerHTML}</style>`);
       }
     });
   } catch (e) {
@@ -492,11 +508,11 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <title>${docTitle} - MedMind A4 Print</title>
+  <title>${docTitle}</title>
   ${compiledStyles}
   <style>
     @page {
-      size: A4 ${isLandscape ? 'landscape' : 'portrait'};
+      size: A4;
       margin: 10mm;
     }
     html, body {
@@ -505,8 +521,11 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
       color: #111827 !important;
       margin: 0 !important;
       padding: 0 !important;
+      width: 100% !important;
       height: auto !important;
       overflow: visible !important;
+      font-size: 9.5pt !important;
+      line-height: 1.35 !important;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
     }
@@ -524,6 +543,21 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
     }
     .screen-page-divider, .no-print {
       display: none !important;
+    }
+    .hd-box {
+      padding: 6px 10px !important;
+      line-height: 1.35 !important;
+    }
+    .hd-stack > * + * {
+      margin-top: 6px !important;
+    }
+    .hd-title {
+      font-size: 11pt !important;
+      line-height: 1.35 !important;
+    }
+    .hd-bullet {
+      font-size: 9.5pt !important;
+      line-height: 1.35 !important;
     }
   </style>
 </head>
@@ -545,82 +579,16 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
           console.warn('Iframe print fallback to window.print():', printErr);
           window.print();
         }
-      }, 250);
+      }, 150);
     } catch (err) {
-      console.warn('Print error, falling back to download:', err);
-      handleDownloadPrintableHtml();
+      console.warn('Print error fallback to window.print():', err);
+      window.print();
     }
   };
 
   /**
-   * Download standalone printable A4 HTML file with full embedded CSS + 1-click Print / Auto-Print
-   */
-  const handleDownloadPrintableHtml = () => {
-    if (!printSheetRef.current) return;
-    const contentHtml = printSheetRef.current.innerHTML;
-    const compiledStyles = collectCompiledDocumentStyles();
-    const safeSlug = String(lessonTitle || 'Bai_Hoc')
-      .replace(/[^\p{L}\p{N}_-]+/gu, '_')
-      .replace(/^_+|_+$/g, '');
-    const fileTitle =
-      lessonsToPrint.length > 1
-        ? `Quyen_De_Cuong_${lessonsToPrint.length}_Bai_Hoc`
-        : `De_Cuong_A4_${safeSlug || 'Y_Khoa'}`;
-
-    const fullHtml = `<!DOCTYPE html>
-<html lang="vi">
-<head>
-  <meta charset="UTF-8" />
-  <title>${fileTitle}</title>
-  ${compiledStyles}
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    @page {
-      size: A4 ${isLandscape ? 'landscape' : 'portrait'};
-      margin: 10mm;
-    }
-    html, body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background-color: #ffffff !important;
-      color: #111827 !important;
-      padding: 16px;
-      max-width: ${isLandscape ? '297mm' : '210mm'};
-      margin: 0 auto;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }
-    @media print {
-      html, body { padding: 0 !important; max-width: none !important; }
-      .no-print, .screen-page-divider { display: none !important; }
-      .a4-page-break {
-        page-break-after: always !important;
-        break-after: page !important;
-      }
-    }
-    table { border-collapse: collapse; width: 100%; }
-    tr, .avoid-break { page-break-inside: avoid; break-inside: avoid; }
-  </style>
-</head>
-<body class="bg-white text-[#111827]">
-  <div class="no-print" style="margin-bottom: 16px; padding: 12px 16px; background: #eff6ff; border: 2px solid #1d4ed8; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 12px;">
-    <span style="font-size: 14px; font-weight: 700; color: #1e3a8a;">📄 Bản in A4 Chuẩn (${lessonsToPrint.length} bài học) — Bấm nút bên phải hoặc Ctrl+P để In ra giấy / Lưu thành PDF</span>
-    <button onclick="window.print()" style="padding: 8px 18px; background: #1d4ed8; color: #fff; border-radius: 6px; font-weight: 700; cursor: pointer; border: none; white-space: nowrap;">🖨️ In ra giấy / Lưu PDF ngay</button>
-  </div>
-  ${contentHtml}
-</body>
-</html>`;
-
-    const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${fileTitle}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  /**
-   * Render a single lesson according to the active `template` with full defensive checks & try/catch
+   * Render a single lesson according to the active `template` with High-Density Medical Handout layout
+   * so each 6-7 branch lesson fits compactly into 1 to 1.5 A4 pages (~22 pages for 20 lessons).
    */
   const renderSingleLessonTemplate = (
     rawLesson: LessonMindmap,
@@ -646,6 +614,16 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
         totalPointsScale
       );
       const { sysName, subName } = getLessonPathNames(lesson);
+      const resolvedLessonTitle = cleanNodeLabel(
+        lRoot.label || lesson.title || `Bài học ${lessonIndex + 1}`
+      );
+      const lessonHeaderPrefix = `BÀI ${lessonIndex + 1}: ${resolvedLessonTitle}`;
+      const resolvedRootSummary =
+        lRoot.summary && lRoot.summary.trim().length > 0
+          ? lRoot.summary.trim()
+          : `Hệ thống hóa ${targetPillars.length} nhánh trọng tâm: ${targetPillars
+              .map((p, i) => `(${i + 1}) ${cleanNodeLabel(p.label)}`)
+              .join(' · ')}.`;
 
       return (
         <LessonPrintErrorBoundary
@@ -654,462 +632,842 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
         >
           <div
             className={`bg-white text-[#111827] ${
-              lessonIndex < totalLessons - 1 ? 'a4-page-break pb-6' : ''
+              lessonIndex < totalLessons - 1 ? 'a4-page-break pb-2' : ''
             }`}
           >
-            {/* Multi-lesson badge banner when printing a booklet */}
-            {totalLessons > 1 && (
-              <div className="mb-2 flex items-center justify-between text-[11px] font-mono font-bold uppercase text-[#1d4ed8] border-b border-neutral-300 pb-1">
-                <span>
-                  BÀI {String(lessonIndex + 1).padStart(2, '0')} /{' '}
-                  {String(totalLessons).padStart(2, '0')} · {sysName} › {subName}
-                </span>
-                <span>{lesson.title}</span>
+            {/* ================================================================= */}
+            {/* TEMPLATE 1: 📋 1. BAREM TỰ LUẬN (HIGH-DENSITY PORTRAIT A4)        */}
+            {/* ================================================================= */}
+            {template === 'barem_outline' && (
+              <div className="bg-white text-[#111827]">
+                <div
+                  style={{ padding: '6px 10px' }}
+                  className="border-2 border-[#1e3a8a] bg-[#eff6ff] rounded-md mb-2 flex items-start justify-between gap-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[8.5pt] font-bold uppercase tracking-wider text-[#1d4ed8]">
+                      ĐỀ CƯƠNG TỰ LUẬN Y KHOA THEO BAREM · {sysName} › {subName}
+                    </div>
+                    <h1
+                      style={{ fontSize: '12pt', lineHeight: 1.3 }}
+                      className="font-extrabold text-[#1e3a8a] uppercase mt-0.5"
+                    >
+                      {lessonHeaderPrefix}
+                    </h1>
+                    <p
+                      style={{ fontSize: '9.5pt', lineHeight: 1.35 }}
+                      className="text-[#111827] mt-0.5"
+                    >
+                      <strong className="text-[#1e3a8a]">
+                        Định nghĩa & Trọng tâm:
+                      </strong>{' '}
+                      {resolvedRootSummary}
+                    </p>
+                  </div>
+
+                  <div
+                    style={{ padding: '4px 8px' }}
+                    className="border border-black text-right shrink-0 bg-white text-black rounded-xs"
+                  >
+                    <div className="text-[8pt] font-bold uppercase">
+                      THANG ĐIỂM
+                    </div>
+                    <div className="text-[11pt] font-extrabold font-mono leading-tight">
+                      {totalPointsScale.toFixed(2)} ĐIỂM
+                    </div>
+                    <div className="text-[8pt] text-neutral-700">
+                      ({rubricCriteria.length} ý chấm)
+                    </div>
+                  </div>
+                </div>
+
+                <table
+                  style={{ fontSize: '9.5pt', lineHeight: 1.35 }}
+                  className="w-full border border-black bg-white text-[#111827]"
+                >
+                  <thead>
+                    <tr className="bg-neutral-100 border-b-2 border-black text-left font-bold text-black">
+                      <th
+                        style={{ padding: '4px 6px' }}
+                        className="border border-black w-[42px] text-center"
+                      >
+                        Mã
+                      </th>
+                      <th
+                        style={{ padding: '4px 8px' }}
+                        className="border border-black"
+                      >
+                        Nội dung Đề cương Tự luận chuẩn (Đã gạch chân Từ khóa)
+                      </th>
+                      <th
+                        style={{ padding: '4px 8px' }}
+                        className="border border-black w-[185px]"
+                      >
+                        Từ khóa ăn điểm Barem
+                      </th>
+                      <th
+                        style={{ padding: '4px 6px' }}
+                        className="border border-black w-[54px] text-center"
+                      >
+                        Điểm
+                      </th>
+                      <th
+                        style={{ padding: '4px 4px' }}
+                        className="border border-black w-[38px] text-center"
+                      >
+                        Đạt
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white text-[#111827]">
+                    {rubricCriteria.map((item, idx) => {
+                      const prevPillar =
+                        idx > 0 ? rubricCriteria[idx - 1].pillarLabel : null;
+                      const showPillarBanner = item.pillarLabel !== prevPillar;
+
+                      return (
+                        <React.Fragment key={item.id}>
+                          {showPillarBanner && (
+                            <tr className="bg-neutral-200 border-y border-black">
+                              <td
+                                colSpan={5}
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: '10.5pt',
+                                  lineHeight: 1.3,
+                                }}
+                                className="font-extrabold uppercase text-black"
+                              >
+                                PHẦN {item.pillarIndex}. {item.pillarLabel}
+                              </td>
+                            </tr>
+                          )}
+                          <tr className="border-b border-black align-top bg-white avoid-break">
+                            <td
+                              style={{ padding: '5px 6px' }}
+                              className="border border-black text-center font-mono font-bold text-[9pt] text-black"
+                            >
+                              {item.code}
+                            </td>
+                            <td
+                              style={{
+                                padding: '5px 8px',
+                                lineHeight: 1.35,
+                              }}
+                              className="border border-black text-[#111827]"
+                            >
+                              <div
+                                style={{ fontSize: '10pt', lineHeight: 1.35 }}
+                                className="font-bold text-black"
+                              >
+                                {renderPrintableKeywordText(
+                                  item.standardContent
+                                )}
+                              </div>
+                              {item.subPoints.length > 0 && (
+                                <ul
+                                  style={{
+                                    fontSize: '9.5pt',
+                                    lineHeight: 1.35,
+                                  }}
+                                  className="pl-2.5 mt-0.5 space-y-0.5 text-neutral-900"
+                                >
+                                  {item.subPoints.map((sp, sIdx) => (
+                                    <li key={sIdx}>
+                                      • {renderPrintableKeywordText(sp)}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </td>
+                            <td
+                              style={{ padding: '5px 6px' }}
+                              className="border border-black bg-white"
+                            >
+                              <div className="flex flex-wrap gap-1">
+                                {item.requiredKeywords.map((kw, kIdx) => (
+                                  <span
+                                    key={kIdx}
+                                    className="inline-block px-1 py-0.2 border border-neutral-800 rounded-xs text-[8.5pt] font-bold text-black bg-amber-50/70"
+                                  >
+                                    {kw}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                            <td
+                              style={{ padding: '5px 4px' }}
+                              className="border border-black text-center font-mono font-extrabold text-[9.5pt] text-black"
+                            >
+                              {item.allocatedPoints.toFixed(2)}đ
+                            </td>
+                            <td
+                              style={{ padding: '5px 4px' }}
+                              className="border border-black text-center"
+                            >
+                              <div className="w-3.5 h-3.5 border border-black mx-auto mt-0.5 bg-white" />
+                            </td>
+                          </tr>
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-neutral-100 border-t-2 border-black font-bold text-black">
+                      <td
+                        colSpan={3}
+                        style={{ padding: '4px 8px' }}
+                        className="border border-black text-right uppercase text-[9.5pt]"
+                      >
+                        Tổng điểm toàn bài Barem chuẩn:
+                      </td>
+                      <td
+                        style={{ padding: '4px 6px' }}
+                        className="border border-black text-center font-mono font-extrabold text-[10pt]"
+                      >
+                        {totalPointsScale.toFixed(2)}đ
+                      </td>
+                      <td
+                        style={{ padding: '4px 4px' }}
+                        className="border border-black text-center font-mono text-[8.5pt]"
+                      >
+                        /{totalPointsScale.toFixed(1)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
             )}
 
-        {/* ================================================================= */}
-        {/* TEMPLATE 1: 📋 1. BAREM TỰ LUẬN (PORTRAIT A4)                     */}
-        {/* ================================================================= */}
-        {template === 'barem_outline' && (
-          <div className="bg-white text-[#111827]">
-            <div className="border-b-2 border-black pb-3 mb-4 flex items-start justify-between gap-4">
-              <div>
-                <div className="text-[11px] font-bold uppercase tracking-wider text-neutral-700">
-                  ĐỀ CƯƠNG ÔN THI TỰ LUẬN Y KHOA THEO BAREM BỘ MÔN · {sysName} /{' '}
-                  {subName}
-                </div>
-                <h1 className="text-[20px] font-extrabold text-black uppercase mt-0.5 leading-snug">
-                  {cleanNodeLabel(lRoot.label)}
-                </h1>
-                {lRoot.summary && (
-                  <p className="text-[12.5px] text-neutral-800 mt-1 italic">
-                    Trọng tâm: {lRoot.summary}
-                  </p>
-                )}
-              </div>
-
-              <div className="border-2 border-black px-3 py-1.5 text-right shrink-0 bg-neutral-50 text-black">
-                <div className="text-[10px] font-bold uppercase">
-                  THANG ĐIỂM CHUẨN
-                </div>
-                <div className="text-[16px] font-extrabold font-mono">
-                  {totalPointsScale.toFixed(2)} ĐIỂM
-                </div>
-                <div className="text-[10px] text-neutral-700">
-                  ({rubricCriteria.length} ý chấm Barem)
-                </div>
-              </div>
-            </div>
-
-            <table className="w-full border border-black text-[12.5px] bg-white text-[#111827]">
-              <thead>
-                <tr className="bg-neutral-100 border-b-2 border-black text-left font-bold text-black">
-                  <th className="border border-black px-2.5 py-2 w-[52px] text-center">
-                    Mã ý
-                  </th>
-                  <th className="border border-black px-3 py-2">
-                    Nội dung Đề cương Tự luận chuẩn (Đã gạch chân Từ khóa)
-                  </th>
-                  <th className="border border-black px-2.5 py-2 w-[215px]">
-                    Từ khóa ăn điểm Barem
-                  </th>
-                  <th className="border border-black px-2 py-2 w-[68px] text-center">
-                    Điểm
-                  </th>
-                  <th className="border border-black px-2 py-2 w-[50px] text-center">
-                    Thuộc
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white text-[#111827]">
-                {rubricCriteria.map((item, idx) => {
-                  const prevPillar =
-                    idx > 0 ? rubricCriteria[idx - 1].pillarLabel : null;
-                  const showPillarBanner = item.pillarLabel !== prevPillar;
-
-                  return (
-                    <React.Fragment key={item.id}>
-                      {showPillarBanner && (
-                        <tr className="bg-neutral-200 border-y border-black">
-                          <td
-                            colSpan={5}
-                            className="px-3 py-1.5 font-extrabold text-[13px] uppercase text-black"
-                          >
-                            PHẦN {item.pillarIndex}. {item.pillarLabel}
-                          </td>
-                        </tr>
-                      )}
-                      <tr className="border-b border-black align-top bg-white">
-                        <td className="border border-black px-2 py-2 text-center font-mono font-bold text-[12px] text-black">
-                          {item.code}
-                        </td>
-                        <td className="border border-black px-3 py-2 leading-relaxed text-[#111827]">
-                          <div className="font-bold text-[13px] text-black mb-1">
-                            {renderPrintableKeywordText(item.standardContent)}
-                          </div>
-                          {item.subPoints.length > 0 && (
-                            <ul className="space-y-1 pl-3 text-[12px] text-neutral-900">
-                              {item.subPoints.map((sp, sIdx) => (
-                                <li key={sIdx} className="leading-snug">
-                                  • {renderPrintableKeywordText(sp)}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </td>
-                        <td className="border border-black px-2.5 py-2 bg-white">
-                          <div className="flex flex-wrap gap-1">
-                            {item.requiredKeywords.map((kw, kIdx) => (
-                              <span
-                                key={kIdx}
-                                className="inline-block px-1.5 py-0.5 border border-neutral-800 rounded-sm text-[11px] font-bold text-black bg-amber-50/70"
-                              >
-                                {kw}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="border border-black px-2 py-2 text-center font-mono font-extrabold text-[12.5px] text-black">
-                          {item.allocatedPoints.toFixed(2)}đ
-                        </td>
-                        <td className="border border-black px-2 py-2 text-center">
-                          <div className="w-4 h-4 border-2 border-black mx-auto mt-0.5 bg-white" />
-                        </td>
-                      </tr>
-                    </React.Fragment>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="bg-neutral-100 border-t-2 border-black font-bold text-black">
-                  <td
-                    colSpan={3}
-                    className="border border-black px-3 py-2 text-right uppercase text-[12px]"
-                  >
-                    Tổng điểm toàn bài Barem chuẩn:
-                  </td>
-                  <td className="border border-black px-2 py-2 text-center font-mono font-extrabold text-[13px]">
-                    {totalPointsScale.toFixed(2)}đ
-                  </td>
-                  <td className="border border-black px-2 py-2 text-center font-mono text-[11px]">
-                    / {totalPointsScale.toFixed(1)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        )}
-
-        {/* ================================================================= */}
-        {/* TEMPLATE 2: 📊 2. INFOGRAPHIC CỘT (LANDSCAPE A4)                  */}
-        {/* ================================================================= */}
-        {template === 'infographic_landscape' && (
-          <div className="bg-white text-[#111827]">
-            <div className="rounded-lg border-2 border-[#1e3a8a] bg-[#eff6ff] p-3.5 mb-4 text-center">
-              <div className="text-[10.5px] font-bold uppercase tracking-wider text-[#1d4ed8]">
-                SƠ ĐỒ HỆ THỐNG HÓA Y KHOA (INFOGRAPHIC CỘT A4) · {sysName} /{' '}
-                {subName}
-              </div>
-              <h1 className="text-[19px] font-extrabold uppercase text-[#1e3a8a] mt-0.5">
-                {cleanNodeLabel(lRoot.label)}
-              </h1>
-              {lRoot.summary && (
-                <p className="text-[12px] text-[#1e293b] mt-1 max-w-4xl mx-auto font-medium">
-                  {lRoot.summary}
-                </p>
-              )}
-            </div>
-
-            <div
-              className="grid gap-3 items-start w-full"
-              style={{
-                gridTemplateColumns:
-                  infographicColLayout === 'all_in_one_row'
-                    ? `repeat(${Math.max(1, targetPillars.length)}, minmax(0, 1fr))`
-                    : targetPillars.length >= 5
-                    ? 'repeat(3, minmax(0, 1fr))'
-                    : 'repeat(auto-fit, minmax(220px, 1fr))',
-              }}
-            >
-              {targetPillars.map((pillar, pIdx) => {
-                const theme =
-                  PRINT_COLUMN_THEMES[pIdx % PRINT_COLUMN_THEMES.length];
-                const lvl2Nodes = pillar.children || [];
-                const pillarNotes = getClinicalNoteSnippets(pillar);
-
-                return (
-                  <div
-                    key={pillar.id}
-                    style={{ borderColor: theme.colBorder }}
-                    className="border-2 rounded-lg bg-white overflow-hidden avoid-break"
-                  >
-                    <div
-                      style={{ backgroundColor: theme.headerBg }}
-                      className="text-white px-3 py-2"
+            {/* ================================================================= */}
+            {/* TEMPLATE 2: 📊 2. INFOGRAPHIC CỘT (HIGH-DENSITY A4)               */}
+            {/* ================================================================= */}
+            {template === 'infographic_landscape' && (
+              <div className="bg-white text-[#111827]">
+                <div
+                  style={{ padding: '6px 10px' }}
+                  className="rounded-md border-2 border-[#1e3a8a] bg-[#eff6ff] mb-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <h1
+                      style={{ fontSize: '11.5pt', lineHeight: 1.3 }}
+                      className="font-extrabold uppercase text-[#1e3a8a]"
                     >
-                      <div className="text-[10px] font-mono font-bold uppercase opacity-90">
-                        NHÁNH LỚN {pIdx + 1}
-                      </div>
-                      <div className="font-extrabold text-[13px] leading-snug">
-                        {cleanNodeLabel(pillar.label)}
-                      </div>
-                    </div>
+                      {lessonHeaderPrefix}
+                    </h1>
+                    <span className="text-[8.5pt] font-mono font-bold uppercase text-[#1d4ed8] shrink-0">
+                      {sysName} › {subName}
+                    </span>
+                  </div>
+                  <div
+                    style={{ fontSize: '9.5pt', lineHeight: 1.35 }}
+                    className="text-[#1e293b] mt-0.5 border-t border-[#93c5fd] pt-1"
+                  >
+                    <strong className="text-[#1e3a8a]">
+                      Định nghĩa & Tổng quan:
+                    </strong>{' '}
+                    {resolvedRootSummary}
+                  </div>
+                </div>
 
-                    {pillar.summary && (
+                <div
+                  className="grid items-start w-full"
+                  style={{
+                    gap: '6px',
+                    gridTemplateColumns:
+                      infographicColLayout === 'all_in_one_row'
+                        ? `repeat(${Math.max(1, targetPillars.length)}, minmax(0, 1fr))`
+                        : targetPillars.length >= 4
+                        ? 'repeat(3, minmax(0, 1fr))'
+                        : 'repeat(auto-fit, minmax(200px, 1fr))',
+                  }}
+                >
+                  {targetPillars.map((pillar, pIdx) => {
+                    const theme =
+                      PRINT_COLUMN_THEMES[pIdx % PRINT_COLUMN_THEMES.length];
+                    const lvl2Nodes = pillar.children || [];
+                    const pillarNotes = getClinicalNoteSnippets(pillar);
+
+                    return (
                       <div
-                        style={{
-                          backgroundColor: theme.subBg,
-                          borderColor: theme.cardBorder,
-                          color: theme.accentText,
-                        }}
-                        className="px-3 py-1.5 border-b text-[11px] font-medium leading-snug"
+                        key={pillar.id}
+                        style={{ borderColor: theme.colBorder }}
+                        className="border rounded-md bg-white overflow-hidden avoid-break"
                       >
-                        {pillar.summary}
-                      </div>
-                    )}
-
-                    <div className="p-2.5 space-y-2 bg-white">
-                      {lvl2Nodes.map((lvl2, l2Idx) => {
-                        const lvl3Nodes = lvl2.children || [];
-                        const lvl2Notes = getClinicalNoteSnippets(lvl2);
-                        return (
-                          <div
-                            key={lvl2.id}
-                            style={{
-                              backgroundColor: theme.cardBg,
-                              borderColor: theme.cardBorder,
-                            }}
-                            className="border rounded-md p-2 avoid-break"
-                          >
-                            <div
-                              style={{
-                                color: theme.accentText,
-                                borderColor: theme.cardBorder,
-                              }}
-                              className="font-bold text-[12px] border-b pb-1 mb-1.5 leading-snug"
-                            >
-                              <span className="font-mono mr-1">
-                                {pIdx + 1}.{l2Idx + 1}.
-                              </span>
-                              {renderPrintableKeywordText(lvl2.label)}
-                            </div>
-
-                            {lvl2.summary && (
-                              <p className="text-[11px] text-neutral-800 mb-1 leading-snug">
-                                {lvl2.summary}
-                              </p>
-                            )}
-
-                            {lvl3Nodes.length > 0 && (
-                              <ul className="space-y-1 text-[11px] text-[#111827]">
-                                {lvl3Nodes.map((lvl3, l3Idx) => (
-                                  <li key={lvl3.id} className="leading-snug">
-                                    <span
-                                      style={{ color: theme.headerBg }}
-                                      className="font-mono font-bold mr-1"
-                                    >
-                                      {l3Idx + 1})
-                                    </span>
-                                    {renderPrintableKeywordText(lvl3.label)}
-                                    {lvl3.summary && (
-                                      <span className="text-neutral-700">
-                                        {' '}
-                                        — {lvl3.summary}
-                                      </span>
-                                    )}
-                                    {lvl3.children &&
-                                      lvl3.children.length > 0 && (
-                                        <ul className="pl-3 mt-0.5 space-y-0.5 text-[10.5px] text-neutral-800">
-                                          {lvl3.children.map((lvl4) => (
-                                            <li key={lvl4.id}>
-                                              •{' '}
-                                              {renderPrintableKeywordText(
-                                                lvl4.label
-                                              )}
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      )}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-
-                            {lvl2Notes.length > 0 && (
-                              <div
-                                style={{ borderColor: theme.cardBorder }}
-                                className="mt-1.5 pt-1 border-t border-dashed text-[10.5px] font-medium text-[#111827] space-y-0.5"
-                              >
-                                {lvl2Notes.map((n, nIdx) => (
-                                  <div key={nIdx}>★ {n}</div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-
-                      {pillarNotes.length > 0 && (
                         <div
                           style={{
-                            backgroundColor: theme.subBg,
-                            borderColor: theme.cardBorder,
+                            backgroundColor: theme.headerBg,
+                            padding: '5px 8px',
                           }}
-                          className="border rounded-md p-2 text-[10.5px] text-[#111827] space-y-0.5"
+                          className="text-white"
                         >
-                          {pillarNotes.map((n, idx) => (
-                            <div key={idx} className="font-semibold">
-                              ★ {n}
-                            </div>
-                          ))}
+                          <div
+                            style={{ fontSize: '10.5pt', lineHeight: 1.3 }}
+                            className="font-extrabold"
+                          >
+                            {pIdx + 1}. {cleanNodeLabel(pillar.label)}
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
-        {/* ================================================================= */}
-        {/* TEMPLATE 3: 🌳 3. SƠ ĐỒ CÂY NGANG (MINDMAP TREE A4 NGANG)         */}
-        {/* ================================================================= */}
-        {template === 'horizontal_tree' && (
-          <div className="bg-white text-[#111827]">
-            {/* Minimal Title Strip */}
-            <div className="border-b-2 border-[#1e3a8a] pb-2 mb-4 flex items-center justify-between">
-              <div>
-                <span className="text-[10px] font-bold uppercase text-[#1d4ed8]">
-                  SƠ ĐỒ TƯ DUY CÂY NGANG (MINDMAP TREE A4) · {sysName} / {subName}
-                </span>
-                <h2 className="text-[17px] font-extrabold uppercase text-[#111827]">
-                  {cleanNodeLabel(lRoot.label)}
-                </h2>
-              </div>
-              <span className="text-[11px] font-mono text-neutral-600">
-                Gốc Trái → Cấp 1 → Cấp 2 → Cấp 3
-              </span>
-            </div>
-
-            {/* Left-to-Right Tree Layout */}
-            <div className="flex items-stretch gap-0 w-full">
-              {/* Root Node Column (Left) */}
-              <div className="w-[195px] shrink-0 flex flex-col justify-center pr-3 relative">
-                <div className="border-2 border-[#1e3a8a] bg-[#eff6ff] rounded-xl p-3 shadow-xs">
-                  <div className="text-[9.5px] font-mono font-bold uppercase text-[#1d4ed8] mb-0.5">
-                    CHỦ ĐỀ GỐC (CẤP 0)
-                  </div>
-                  <div className="font-extrabold text-[13.5px] text-[#1e3a8a] leading-snug">
-                    {cleanNodeLabel(lRoot.label)}
-                  </div>
-                  {lRoot.summary && (
-                    <p className="text-[10.5px] text-[#1e293b] mt-1.5 pt-1.5 border-t border-[#93c5fd] leading-snug">
-                      {lRoot.summary}
-                    </p>
-                  )}
-                </div>
-                {/* Horizontal connector stem to spine */}
-                <div className="absolute right-0 top-1/2 w-3 h-[2.5px] bg-[#1e3a8a]" />
-              </div>
-
-              {/* Right Tree Spine & Level 1 -> Level 2 -> Level 3 Branches */}
-              <div className="flex-1 border-l-[2.5px] border-[#1e3a8a] pl-4 space-y-3.5 py-1">
-                {targetPillars.map((pillar, pIdx) => {
-                  const theme =
-                    PRINT_COLUMN_THEMES[pIdx % PRINT_COLUMN_THEMES.length];
-                  const lvl2Nodes = pillar.children || [];
-
-                  return (
-                    <div
-                      key={pillar.id}
-                      className="relative flex items-start gap-3 avoid-break"
-                    >
-                      {/* Horizontal branch connector from vertical spine */}
-                      <div
-                        style={{ backgroundColor: theme.colBorder }}
-                        className="absolute -left-4 top-4 w-4 h-[2px]"
-                      />
-
-                      {/* Level 1 Node Box */}
-                      <div
-                        style={{
-                          borderColor: theme.colBorder,
-                          backgroundColor: theme.subBg,
-                        }}
-                        className="w-[205px] shrink-0 border-2 rounded-lg p-2.5"
-                      >
-                        <div
-                          style={{ color: theme.accentText }}
-                          className="font-extrabold text-[12.5px] leading-snug"
-                        >
-                          <span className="font-mono mr-1">{pIdx + 1}.</span>
-                          {cleanNodeLabel(pillar.label)}
-                        </div>
                         {pillar.summary && (
-                          <p className="text-[10.5px] text-neutral-800 mt-1 leading-snug">
+                          <div
+                            style={{
+                              backgroundColor: theme.subBg,
+                              borderColor: theme.cardBorder,
+                              color: theme.accentText,
+                              padding: '4px 8px',
+                              fontSize: '9pt',
+                              lineHeight: 1.3,
+                            }}
+                            className="border-b font-medium"
+                          >
                             {pillar.summary}
-                          </p>
+                          </div>
                         )}
-                      </div>
 
-                      {/* Level 2 & Level 3 Branches (Right side) */}
-                      {lvl2Nodes.length > 0 && (
                         <div
-                          style={{ borderColor: theme.colBorder }}
-                          className="flex-1 border-l-2 pl-3 space-y-2"
+                          style={{ padding: '6px', gap: '6px' }}
+                          className="flex flex-col bg-white"
                         >
                           {lvl2Nodes.map((lvl2, l2Idx) => {
                             const lvl3Nodes = lvl2.children || [];
+                            const lvl2Notes = getClinicalNoteSnippets(lvl2);
                             return (
                               <div
                                 key={lvl2.id}
                                 style={{
                                   backgroundColor: theme.cardBg,
                                   borderColor: theme.cardBorder,
+                                  padding: '6px 8px',
                                 }}
-                                className="relative border rounded-md p-2 avoid-break"
+                                className="border rounded-xs avoid-break"
                               >
-                                <span
-                                  style={{ backgroundColor: theme.colBorder }}
-                                  className="absolute -left-3 top-3.5 w-3 h-[1.5px]"
-                                />
                                 <div
-                                  style={{ color: theme.accentText }}
-                                  className="font-bold text-[12px] leading-snug"
+                                  style={{
+                                    color: theme.accentText,
+                                    borderColor: theme.cardBorder,
+                                    fontSize: '10pt',
+                                    lineHeight: 1.35,
+                                  }}
+                                  className="font-bold border-b pb-0.5 mb-1"
                                 >
                                   <span className="font-mono mr-1">
                                     {pIdx + 1}.{l2Idx + 1}.
                                   </span>
                                   {renderPrintableKeywordText(lvl2.label)}
+                                </div>
+
+                                {lvl2.summary && (
+                                  <p
+                                    style={{
+                                      fontSize: '9pt',
+                                      lineHeight: 1.35,
+                                    }}
+                                    className="text-neutral-800 mb-0.5"
+                                  >
+                                    {lvl2.summary}
+                                  </p>
+                                )}
+
+                                {lvl3Nodes.length > 0 && (
+                                  <ul
+                                    style={{
+                                      fontSize: '9.5pt',
+                                      lineHeight: 1.35,
+                                    }}
+                                    className="space-y-0.5 text-[#111827]"
+                                  >
+                                    {lvl3Nodes.map((lvl3, l3Idx) => (
+                                      <li key={lvl3.id}>
+                                        <span
+                                          style={{ color: theme.headerBg }}
+                                          className="font-mono font-bold mr-1"
+                                        >
+                                          {l3Idx + 1})
+                                        </span>
+                                        {renderPrintableKeywordText(lvl3.label)}
+                                        {lvl3.summary && (
+                                          <span className="text-neutral-700">
+                                            {' '}
+                                            — {lvl3.summary}
+                                          </span>
+                                        )}
+                                        {lvl3.children &&
+                                          lvl3.children.length > 0 && (
+                                            <ul className="pl-2.5 mt-0.5 space-y-0.5 text-[9pt] text-neutral-800">
+                                              {lvl3.children.map((lvl4) => (
+                                                <li key={lvl4.id}>
+                                                  •{' '}
+                                                  {renderPrintableKeywordText(
+                                                    lvl4.label
+                                                  )}
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          )}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+
+                                {lvl2Notes.length > 0 && (
+                                  <div
+                                    style={{
+                                      borderColor: theme.cardBorder,
+                                      fontSize: '8.5pt',
+                                      lineHeight: 1.3,
+                                    }}
+                                    className="mt-1 pt-0.5 border-t border-dashed font-medium text-[#111827]"
+                                  >
+                                    {lvl2Notes.map((n, nIdx) => (
+                                      <div key={nIdx}>★ {n}</div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+
+                          {pillarNotes.length > 0 && (
+                            <div
+                              style={{
+                                backgroundColor: theme.subBg,
+                                borderColor: theme.cardBorder,
+                                padding: '4px 8px',
+                                fontSize: '8.5pt',
+                                lineHeight: 1.3,
+                              }}
+                              className="border rounded-xs text-[#111827]"
+                            >
+                              {pillarNotes.map((n, idx) => (
+                                <div key={idx} className="font-semibold">
+                                  ★ {n}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ================================================================= */}
+            {/* TEMPLATE 3: 🌳 3. SƠ ĐỒ CÂY NGANG (HIGH-DENSITY 24% / 76% A4)     */}
+            {/* ================================================================= */}
+            {template === 'horizontal_tree' && (
+              <div className="bg-white text-[#111827] w-full">
+                {/* Prominent Level 0 Lesson Header Bar + Summary Definition Box at Top of Every Lesson */}
+                <div
+                  style={{ padding: '6px 10px', marginBottom: '6px' }}
+                  className="border-2 border-[#1e3a8a] bg-[#eff6ff] rounded-md w-full avoid-break"
+                >
+                  <div className="flex items-center justify-between gap-2 border-b border-[#93c5fd] pb-1 mb-1">
+                    <h1
+                      style={{ fontSize: '11.5pt', lineHeight: 1.3 }}
+                      className="font-extrabold uppercase text-[#1e3a8a]"
+                    >
+                      {lessonHeaderPrefix}
+                    </h1>
+                    <span className="text-[8.5pt] font-mono font-bold uppercase text-[#1d4ed8] shrink-0">
+                      {sysName} › {subName} · {targetPillars.length} nhánh lớn
+                    </span>
+                  </div>
+                  <div
+                    style={{ fontSize: '9.5pt', lineHeight: 1.35 }}
+                    className="text-[#111827]"
+                  >
+                    <strong className="text-[#1e3a8a] font-bold">
+                      Định nghĩa & Trọng tâm bài học (Cấp 0):
+                    </strong>{' '}
+                    <span>{resolvedRootSummary}</span>
+                  </div>
+                </div>
+
+                {/* 100% Width Horizontal Tree: Left Level 1 (24%) | Right Level 2 & 3 (76%) */}
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px',
+                  }}
+                  className="w-full border-l-[2.5px] border-[#1e3a8a] pl-2.5"
+                >
+                  {targetPillars.map((pillar, pIdx) => {
+                    const theme =
+                      PRINT_COLUMN_THEMES[pIdx % PRINT_COLUMN_THEMES.length];
+                    const lvl2Nodes = pillar.children || [];
+
+                    return (
+                      <div
+                        key={pillar.id}
+                        style={{ gap: '8px' }}
+                        className="relative flex items-start w-full avoid-break"
+                      >
+                        {/* Horizontal branch connector from left spine */}
+                        <div
+                          style={{ backgroundColor: theme.colBorder }}
+                          className="absolute -left-2.5 top-3.5 w-2.5 h-[2px]"
+                        />
+
+                        {/* Left Column: Level 1 Node Box (24% width) */}
+                        <div
+                          style={{
+                            width: '24%',
+                            padding: '6px 10px',
+                            borderColor: theme.colBorder,
+                            backgroundColor: theme.subBg,
+                            lineHeight: 1.35,
+                          }}
+                          className="shrink-0 border-2 rounded-md hd-box"
+                        >
+                          <div
+                            style={{
+                              color: theme.accentText,
+                              fontSize: '11pt',
+                              lineHeight: 1.35,
+                            }}
+                            className="font-extrabold hd-title"
+                          >
+                            <span className="font-mono mr-1">{pIdx + 1}.</span>
+                            {cleanNodeLabel(pillar.label)}
+                          </div>
+                          {pillar.summary && (
+                            <p
+                              style={{
+                                fontSize: '9.5pt',
+                                lineHeight: 1.35,
+                              }}
+                              className="text-neutral-800 mt-0.5 hd-bullet"
+                            >
+                              {pillar.summary}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Right Column: Level 2 & Level 3 Branches (76% width) */}
+                        <div
+                          style={{
+                            width: '76%',
+                            borderColor: theme.colBorder,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '6px',
+                          }}
+                          className="flex-1 border-l-2 pl-2.5"
+                        >
+                          {lvl2Nodes.length > 0 ? (
+                            lvl2Nodes.map((lvl2, l2Idx) => {
+                              const lvl3Nodes = lvl2.children || [];
+                              return (
+                                <div
+                                  key={lvl2.id}
+                                  style={{
+                                    backgroundColor: theme.cardBg,
+                                    borderColor: theme.cardBorder,
+                                    padding: '6px 10px',
+                                    lineHeight: 1.35,
+                                  }}
+                                  className="relative border rounded-md avoid-break hd-box"
+                                >
+                                  <span
+                                    style={{ backgroundColor: theme.colBorder }}
+                                    className="absolute -left-2.5 top-3 w-2.5 h-[1.5px]"
+                                  />
+                                  <div
+                                    style={{
+                                      color: theme.accentText,
+                                      fontSize: '11pt',
+                                      lineHeight: 1.35,
+                                    }}
+                                    className="font-bold hd-title"
+                                  >
+                                    <span className="font-mono mr-1">
+                                      {pIdx + 1}.{l2Idx + 1}.
+                                    </span>
+                                    {renderPrintableKeywordText(lvl2.label)}
+                                    {lvl2.summary && (
+                                      <span
+                                        style={{ fontSize: '9.5pt' }}
+                                        className="font-normal text-neutral-800"
+                                      >
+                                        {' '}
+                                        — {lvl2.summary}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {lvl3Nodes.length > 0 && (
+                                    <div
+                                      style={{
+                                        fontSize: '9.5pt',
+                                        lineHeight: 1.35,
+                                      }}
+                                      className="mt-1 pl-2.5 border-l border-neutral-400 space-y-0.5 text-[#111827] hd-bullet"
+                                    >
+                                      {lvl3Nodes.map((lvl3) => (
+                                        <div
+                                          key={lvl3.id}
+                                          style={{ lineHeight: 1.35 }}
+                                        >
+                                          •{' '}
+                                          {renderPrintableKeywordText(
+                                            lvl3.label,
+                                            theme.highlightBg
+                                          )}
+                                          {lvl3.summary && (
+                                            <span className="text-neutral-700">
+                                              {' '}
+                                              ({lvl3.summary})
+                                            </span>
+                                          )}
+                                          {lvl3.children &&
+                                            lvl3.children.length > 0 && (
+                                              <div className="pl-3 mt-0.5 space-y-0.5 text-[9pt] text-neutral-800">
+                                                {lvl3.children.map((lvl4) => (
+                                                  <div key={lvl4.id}>
+                                                    ◦{' '}
+                                                    {renderPrintableKeywordText(
+                                                      lvl4.label
+                                                    )}
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div
+                              style={{
+                                backgroundColor: theme.cardBg,
+                                borderColor: theme.cardBorder,
+                                padding: '6px 10px',
+                                fontSize: '9.5pt',
+                                lineHeight: 1.35,
+                              }}
+                              className="border rounded-md text-neutral-800"
+                            >
+                              {pillar.summary || cleanNodeLabel(pillar.label)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ================================================================= */}
+            {/* TEMPLATE 4: 📝 4. VỞ GẠCH Ý CORNELL (HIGH-DENSITY CORNELL A4)     */}
+            {/* ================================================================= */}
+            {template === 'cornell_note' && (
+              <div className="bg-white text-[#111827] border-2 border-black">
+                {/* Cornell Top Header */}
+                <div
+                  style={{ padding: '6px 10px' }}
+                  className="border-b-2 border-black bg-[#eff6ff] flex items-start justify-between gap-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[8.5pt] font-bold uppercase text-[#1d4ed8]">
+                      VỞ GHI CHÉP Y KHOA CORNELL · {sysName} › {subName}
+                    </div>
+                    <h1
+                      style={{ fontSize: '11.5pt', lineHeight: 1.3 }}
+                      className="font-extrabold uppercase text-[#1e3a8a] mt-0.5"
+                    >
+                      {lessonHeaderPrefix}
+                    </h1>
+                    <div
+                      style={{ fontSize: '9.5pt', lineHeight: 1.35 }}
+                      className="text-[#111827] mt-0.5"
+                    >
+                      <strong>Định nghĩa & Trọng tâm:</strong>{' '}
+                      {resolvedRootSummary}
+                    </div>
+                  </div>
+                  <div className="text-right text-[8.5pt] font-mono shrink-0">
+                    <div>Ngày ôn: ..../..../202..</div>
+                    <div className="mt-0.5">[ ] Lần 1 &nbsp; [ ] Lần 2</div>
+                  </div>
+                </div>
+
+                {/* Cornell 2-Column Body: 24% Left Cues | 76% Right Detailed Notes */}
+                <div className="divide-y divide-black">
+                  <div className="flex bg-neutral-200 font-extrabold text-[9.5pt] uppercase text-black">
+                    <div
+                      style={{ width: '24%', padding: '5px 8px' }}
+                      className="border-r-2 border-black shrink-0"
+                    >
+                      MỤC LỚN & TRỌNG TÂM (24%)
+                    </div>
+                    <div
+                      style={{ width: '76%', padding: '5px 10px' }}
+                      className="flex-1"
+                    >
+                      GHI CHÉP PHÂN CẤP CHI TIẾT & TỪ KHÓA (76%)
+                    </div>
+                  </div>
+
+                  {targetPillars.map((pillar, pIdx) => {
+                    const theme =
+                      PRINT_COLUMN_THEMES[pIdx % PRINT_COLUMN_THEMES.length];
+                    const lvl2Nodes = pillar.children || [];
+                    const pillarNotes = getClinicalNoteSnippets(pillar);
+
+                    return (
+                      <div
+                        key={pillar.id}
+                        className="flex avoid-break bg-white"
+                      >
+                        {/* Left Column (24%) */}
+                        <div
+                          style={{ width: '24%', padding: '6px 10px' }}
+                          className="shrink-0 border-r-2 border-black bg-neutral-50/70"
+                        >
+                          <div
+                            style={{
+                              color: theme.headerBg,
+                              fontSize: '8.5pt',
+                            }}
+                            className="font-mono font-bold uppercase"
+                          >
+                            MỤC LỚN {pIdx + 1}
+                          </div>
+                          <h3
+                            style={{ fontSize: '11pt', lineHeight: 1.35 }}
+                            className="font-extrabold text-black mt-0.5"
+                          >
+                            {cleanNodeLabel(pillar.label)}
+                          </h3>
+
+                          {pillar.summary && (
+                            <div
+                              style={{
+                                fontSize: '9pt',
+                                lineHeight: 1.35,
+                                padding: '4px 6px',
+                              }}
+                              className="mt-1 rounded border border-neutral-300 bg-white text-neutral-800"
+                            >
+                              <strong className="text-black">Trọng tâm:</strong>{' '}
+                              {pillar.summary}
+                            </div>
+                          )}
+
+                          {pillarNotes.length > 0 && (
+                            <div className="mt-1 space-y-0.5 text-[8.5pt] text-neutral-900">
+                              {pillarNotes.map((n, idx) => (
+                                <div
+                                  key={idx}
+                                  className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-300"
+                                >
+                                  ★ {n}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Right Column (76%) */}
+                        <div
+                          style={{
+                            width: '76%',
+                            padding: '6px 10px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '6px',
+                          }}
+                          className="flex-1 bg-white"
+                        >
+                          {lvl2Nodes.map((lvl2, l2Idx) => {
+                            const lvl3Nodes = lvl2.children || [];
+                            const lvl2Notes = getClinicalNoteSnippets(lvl2);
+                            return (
+                              <div key={lvl2.id} className="avoid-break">
+                                <div
+                                  style={{
+                                    fontSize: '10.5pt',
+                                    lineHeight: 1.35,
+                                  }}
+                                  className="font-bold text-black flex items-baseline gap-1"
+                                >
+                                  <span
+                                    style={{ color: theme.headerBg }}
+                                    className="font-mono font-extrabold"
+                                  >
+                                    {pIdx + 1}.{l2Idx + 1}.
+                                  </span>
+                                  <span
+                                    style={{
+                                      backgroundColor: theme.highlightBg,
+                                    }}
+                                    className="px-1 py-0.2 rounded-xs border-b border-black/30"
+                                  >
+                                    {cleanNodeLabel(lvl2.label)}
+                                  </span>
                                   {lvl2.summary && (
-                                    <span className="font-normal text-neutral-700">
-                                      {' '}
+                                    <span
+                                      style={{ fontSize: '9.5pt' }}
+                                      className="font-normal text-neutral-800 italic"
+                                    >
                                       — {lvl2.summary}
                                     </span>
                                   )}
                                 </div>
 
                                 {lvl3Nodes.length > 0 && (
-                                  <div className="mt-1 pl-3 border-l border-neutral-400 space-y-0.5 text-[11px] text-[#111827]">
+                                  <ul
+                                    style={{
+                                      fontSize: '9.5pt',
+                                      lineHeight: 1.35,
+                                    }}
+                                    className="pl-4 mt-0.5 space-y-0.5 text-[#111827]"
+                                  >
                                     {lvl3Nodes.map((lvl3) => (
-                                      <div
-                                        key={lvl3.id}
-                                        className="leading-snug"
-                                      >
-                                        •{' '}
+                                      <li key={lvl3.id}>
+                                        <span className="font-bold mr-1">
+                                          •
+                                        </span>
                                         {renderPrintableKeywordText(
                                           lvl3.label,
-                                          theme.highlightBg
+                                          '#fef08a'
                                         )}
                                         {lvl3.summary && (
                                           <span className="text-neutral-700">
                                             {' '}
-                                            ({lvl3.summary})
+                                            — {lvl3.summary}
                                           </span>
                                         )}
-                                      </div>
+                                        {lvl3.children &&
+                                          lvl3.children.length > 0 && (
+                                            <ul className="pl-3 mt-0.5 space-y-0.5 text-[9pt] text-neutral-800">
+                                              {lvl3.children.map((lvl4) => (
+                                                <li key={lvl4.id}>
+                                                  ◦{' '}
+                                                  {renderPrintableKeywordText(
+                                                    lvl4.label
+                                                  )}
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          )}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+
+                                {lvl2Notes.length > 0 && (
+                                  <div className="pl-4 mt-0.5 space-y-0.5 text-[9pt] font-medium text-neutral-900">
+                                    {lvl2Notes.map((n, idx) => (
+                                      <div key={idx}>★ {n}</div>
                                     ))}
                                   </div>
                                 )}
@@ -1117,317 +1475,153 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                             );
                           })}
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ================================================================= */}
-        {/* TEMPLATE 4: 📝 4. VỞ GẠCH Ý CORNELL (CORNELL NOTE A4)             */}
-        {/* ================================================================= */}
-        {template === 'cornell_note' && (
-          <div className="bg-white text-[#111827] border-2 border-black">
-            {/* Cornell Top Header */}
-            <div className="border-b-2 border-black p-4 bg-neutral-50 flex items-start justify-between gap-4">
-              <div>
-                <div className="text-[10.5px] font-bold uppercase text-neutral-600">
-                  VỞ GHI CHÉP Y KHOA PHƯƠNG PHÁP CORNELL · {sysName} / {subName}
-                </div>
-                <h1 className="text-[19px] font-extrabold uppercase text-black mt-0.5">
-                  {cleanNodeLabel(lRoot.label)}
-                </h1>
-              </div>
-              <div className="text-right text-[11px] font-mono shrink-0">
-                <div>Ngày ôn: ....../....../202...</div>
-                <div className="mt-1">Mức độ thuộc: [ ] Lần 1 [ ] Lần 2</div>
-              </div>
-            </div>
-
-            {/* Cornell 2-Column Body: 28% Left Cues | 72% Right Detailed Notes */}
-            <div className="divide-y divide-black">
-              {/* Column Header Row */}
-              <div className="grid grid-cols-12 bg-neutral-200 font-extrabold text-[11.5px] uppercase text-black">
-                <div className="col-span-4 p-2.5 border-r-2 border-black">
-                  MỤC LỚN & TRỌNG TÂM / CÂU HỎI GỢI NHỚ (28%)
-                </div>
-                <div className="col-span-8 p-2.5">
-                  GHI CHÉP PHÂN CẤP CHI TIẾT & TỪ KHÓA TÔ SÁNG (72%)
-                </div>
-              </div>
-
-              {targetPillars.map((pillar, pIdx) => {
-                const theme =
-                  PRINT_COLUMN_THEMES[pIdx % PRINT_COLUMN_THEMES.length];
-                const lvl2Nodes = pillar.children || [];
-                const pillarNotes = getClinicalNoteSnippets(pillar);
-
-                return (
-                  <div
-                    key={pillar.id}
-                    className="grid grid-cols-12 avoid-break bg-white"
-                  >
-                    {/* Left Column (4/12): Main Topic & Clinical Cues */}
-                    <div className="col-span-4 p-3.5 border-r-2 border-black bg-neutral-50/60 flex flex-col justify-between">
-                      <div>
-                        <div
-                          style={{ color: theme.headerBg }}
-                          className="font-mono text-[11px] font-bold uppercase"
-                        >
-                          MỤC LỚN {pIdx + 1}
-                        </div>
-                        <h3 className="font-extrabold text-[14px] text-black leading-snug mt-0.5">
-                          {cleanNodeLabel(pillar.label)}
-                        </h3>
-
-                        {pillar.summary && (
-                          <div className="mt-2 p-2 rounded border border-neutral-300 bg-white text-[11.5px] text-neutral-800 leading-snug">
-                            <strong className="text-black">Trọng tâm:</strong>{' '}
-                            {pillar.summary}
-                          </div>
-                        )}
-
-                        {pillarNotes.length > 0 && (
-                          <div className="mt-2 space-y-1 text-[11px] text-neutral-900">
-                            {pillarNotes.map((n, idx) => (
-                              <div
-                                key={idx}
-                                className="p-1.5 rounded bg-amber-50 border border-amber-300"
-                              >
-                                ★ {n}
-                              </div>
-                            ))}
-                          </div>
-                        )}
                       </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
-                      <div className="mt-3 pt-2 border-t border-dashed border-neutral-400 text-[10.5px] text-neutral-600 font-mono">
-                        Gồm {lvl2Nodes.length} phân mục Cấp 2
-                      </div>
-                    </div>
-
-                    {/* Right Column (8/12): Hierarchical Outline with Highlighted Keywords */}
-                    <div className="col-span-8 p-3.5 space-y-3 bg-white">
-                      {lvl2Nodes.map((lvl2, l2Idx) => {
-                        const lvl3Nodes = lvl2.children || [];
-                        const lvl2Notes = getClinicalNoteSnippets(lvl2);
-                        return (
-                          <div key={lvl2.id} className="avoid-break">
-                            <div className="font-bold text-[13px] text-black flex items-baseline gap-1.5">
-                              <span
-                                style={{ color: theme.headerBg }}
-                                className="font-mono font-extrabold"
-                              >
-                                {pIdx + 1}.{l2Idx + 1}.
-                              </span>
-                              <span
-                                style={{ backgroundColor: theme.highlightBg }}
-                                className="px-1.5 py-0.5 rounded-xs border-b border-black/30"
-                              >
-                                {cleanNodeLabel(lvl2.label)}
-                              </span>
-                            </div>
-
-                            {lvl2.summary && (
-                              <p className="text-[12px] text-neutral-800 pl-5 mt-1 leading-snug italic">
-                                → {lvl2.summary}
-                              </p>
-                            )}
-
-                            {lvl3Nodes.length > 0 && (
-                              <ul className="pl-5 mt-1.5 space-y-1 text-[12px] text-[#111827]">
-                                {lvl3Nodes.map((lvl3) => (
-                                  <li key={lvl3.id} className="leading-relaxed">
-                                    <span className="font-bold mr-1.5">•</span>
-                                    {renderPrintableKeywordText(
-                                      lvl3.label,
-                                      '#fef08a'
-                                    )}
-                                    {lvl3.summary && (
-                                      <span className="text-neutral-700">
-                                        {' '}
-                                        — {lvl3.summary}
-                                      </span>
-                                    )}
-                                    {lvl3.children &&
-                                      lvl3.children.length > 0 && (
-                                        <ul className="pl-4 mt-0.5 space-y-0.5 text-[11.5px] text-neutral-800">
-                                          {lvl3.children.map((lvl4) => (
-                                            <li key={lvl4.id}>
-                                              ◦{' '}
-                                              {renderPrintableKeywordText(
-                                                lvl4.label
-                                              )}
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      )}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-
-                            {lvl2Notes.length > 0 && (
-                              <div className="pl-5 mt-1.5 space-y-0.5 text-[11.5px] font-medium text-neutral-900">
-                                {lvl2Notes.map((n, idx) => (
-                                  <div key={idx}>★ {n}</div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+            {/* ================================================================= */}
+            {/* TEMPLATE 5: 🐟 5. SƠ ĐỒ XƯƠNG CÁ / LƯU ĐỒ (HIGH-DENSITY A4)       */}
+            {/* ================================================================= */}
+            {template === 'fishbone_flowchart' && (
+              <div className="bg-white text-[#111827]">
+                <div
+                  style={{ padding: '6px 10px', marginBottom: '6px' }}
+                  className="border-2 border-[#1e3a8a] bg-[#eff6ff] rounded-md"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <h2
+                      style={{ fontSize: '11.5pt', lineHeight: 1.3 }}
+                      className="font-extrabold uppercase text-[#1e3a8a]"
+                    >
+                      {lessonHeaderPrefix}
+                    </h2>
+                    <span className="text-[8.5pt] font-mono font-bold text-[#1d4ed8]">
+                      {sysName} › {subName} · {targetPillars.length} nhánh chính
+                    </span>
                   </div>
-                );
-              })}
-
-              {/* Cornell Bottom Summary Box */}
-              <div className="p-3.5 bg-neutral-100 avoid-break">
-                <div className="text-[11px] font-extrabold uppercase text-black mb-1">
-                  📌 TỔNG KẾT CỐT LÕI CUỐI TRANG (CORNELL SUMMARY):
+                  <div
+                    style={{ fontSize: '9.5pt', lineHeight: 1.35 }}
+                    className="text-[#111827] mt-0.5 border-t border-[#93c5fd] pt-0.5"
+                  >
+                    <strong className="text-[#1e3a8a]">
+                      Định nghĩa & Trọng tâm:
+                    </strong>{' '}
+                    {resolvedRootSummary}
+                  </div>
                 </div>
-                <div className="text-[12px] text-neutral-900 leading-relaxed">
-                  {lRoot.summary ||
-                    `Bài học "${cleanNodeLabel(lRoot.label)}" gồm ${
-                      targetPillars.length
-                    } trụ cột chính: ${targetPillars
-                      .map((p, i) => `(${i + 1}) ${cleanNodeLabel(p.label)}`)
-                      .join('; ')}.`}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* ================================================================= */}
-        {/* TEMPLATE 5: 🐟 5. SƠ ĐỒ XƯƠNG CÁ / LƯU ĐỒ (ISHIKAWA & FLOWCHART)  */}
-        {/* ================================================================= */}
-        {template === 'fishbone_flowchart' && (
-          <div className="bg-white text-[#111827]">
-            <div className="border-b-2 border-[#1e3a8a] pb-2 mb-4 flex items-center justify-between">
-              <div>
-                <span className="text-[10px] font-bold uppercase text-[#1d4ed8]">
-                  {fishboneOrFlowchart === 'fishbone'
-                    ? 'SƠ ĐỒ XƯƠNG CÁ Y KHOA (ISHIKAWA DIAGRAM A4)'
-                    : 'LƯU ĐỒ MŨI TÊN CƠ CHẾ & LÂM SÀNG (FLOWCHART A4)'}{' '}
-                  · {sysName} / {subName}
-                </span>
-                <h2 className="text-[18px] font-extrabold uppercase text-[#111827]">
-                  {cleanNodeLabel(lRoot.label)}
-                </h2>
-              </div>
-              <span className="text-[11px] font-mono text-neutral-700">
-                {targetPillars.length} nhánh chính
-              </span>
-            </div>
+                {fishboneOrFlowchart === 'fishbone' ? (
+                  (() => {
+                    const topRibs = targetPillars.filter(
+                      (_, idx) => idx % 2 === 0
+                    );
+                    const bottomRibs = targetPillars.filter(
+                      (_, idx) => idx % 2 === 1
+                    );
 
-            {fishboneOrFlowchart === 'fishbone' ? (
-              /* 5A: WHITE-PAPER ISHIKAWA FISHBONE SCHEMATIC */
-              (() => {
-                const topRibs = targetPillars.filter((_, idx) => idx % 2 === 0);
-                const bottomRibs = targetPillars.filter(
-                  (_, idx) => idx % 2 === 1
-                );
+                    const renderWhiteRibCard = (
+                      pillar: MindmapNode,
+                      pIndex: number,
+                      isTop: boolean
+                    ) => {
+                      const theme =
+                        PRINT_COLUMN_THEMES[
+                          (pIndex - 1) % PRINT_COLUMN_THEMES.length
+                        ];
+                      const lvl2Nodes = pillar.children || [];
 
-                const renderWhiteRibCard = (
-                  pillar: MindmapNode,
-                  pIndex: number,
-                  isTop: boolean
-                ) => {
-                  const theme =
-                    PRINT_COLUMN_THEMES[
-                      (pIndex - 1) % PRINT_COLUMN_THEMES.length
-                    ];
-                  const lvl2Nodes = pillar.children || [];
-
-                  const headerBox = (
-                    <div
-                      style={{
-                        backgroundColor: theme.headerBg,
-                        borderColor: theme.colBorder,
-                      }}
-                      className="px-3 py-1.5 rounded-md text-white font-bold text-[12px] shadow-xs w-full"
-                    >
-                      <span className="font-mono mr-1">{pIndex}.</span>
-                      {cleanNodeLabel(pillar.label)}
-                    </div>
-                  );
-
-                  const subBonesList = (
-                    <div
-                      style={{ borderColor: theme.colBorder }}
-                      className="w-full border-l-2 ml-3 pl-2.5 space-y-1.5 py-1"
-                    >
-                      {lvl2Nodes.map((lvl2, l2Idx) => (
+                      const headerBox = (
                         <div
-                          key={lvl2.id}
                           style={{
-                            backgroundColor: theme.cardBg,
-                            borderColor: theme.cardBorder,
+                            backgroundColor: theme.headerBg,
+                            borderColor: theme.colBorder,
+                            padding: '4px 8px',
+                            fontSize: '10.5pt',
+                            lineHeight: 1.3,
                           }}
-                          className="border rounded p-1.5 text-[11px] leading-snug avoid-break"
+                          className="rounded text-white font-bold w-full"
                         >
-                          <div
-                            style={{ color: theme.accentText }}
-                            className="font-bold"
-                          >
-                            {pIndex}.{l2Idx + 1}.{' '}
-                            {renderPrintableKeywordText(lvl2.label)}
-                          </div>
-                          {lvl2.children && lvl2.children.length > 0 && (
-                            <ul className="pl-2.5 mt-0.5 space-y-0.5 text-[10.5px] text-neutral-900">
-                              {lvl2.children.map((lvl3) => (
-                                <li key={lvl3.id}>
-                                  • {renderPrintableKeywordText(lvl3.label)}
-                                </li>
-                              ))}
-                            </ul>
+                          <span className="font-mono mr-1">{pIndex}.</span>
+                          {cleanNodeLabel(pillar.label)}
+                        </div>
+                      );
+
+                      const subBonesList = (
+                        <div
+                          style={{ borderColor: theme.colBorder, gap: '4px' }}
+                          className="w-full border-l-2 ml-2 pl-2 flex flex-col py-0.5"
+                        >
+                          {lvl2Nodes.map((lvl2, l2Idx) => (
+                            <div
+                              key={lvl2.id}
+                              style={{
+                                backgroundColor: theme.cardBg,
+                                borderColor: theme.cardBorder,
+                                padding: '4px 8px',
+                                fontSize: '9.5pt',
+                                lineHeight: 1.35,
+                              }}
+                              className="border rounded avoid-break"
+                            >
+                              <div
+                                style={{
+                                  color: theme.accentText,
+                                  fontSize: '10pt',
+                                }}
+                                className="font-bold"
+                              >
+                                {pIndex}.{l2Idx + 1}.{' '}
+                                {renderPrintableKeywordText(lvl2.label)}
+                              </div>
+                              {lvl2.children && lvl2.children.length > 0 && (
+                                <ul className="pl-2 mt-0.5 space-y-0.5 text-[9pt] text-neutral-900">
+                                  {lvl2.children.map((lvl3) => (
+                                    <li key={lvl3.id}>
+                                      • {renderPrintableKeywordText(lvl3.label)}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      );
+
+                      return (
+                        <div
+                          key={pillar.id}
+                          className="flex flex-col items-start justify-end avoid-break"
+                        >
+                          {isTop ? (
+                            <>
+                              {subBonesList}
+                              <div className="mt-1 w-full">{headerBox}</div>
+                              <div
+                                style={{ backgroundColor: theme.colBorder }}
+                                className="w-[2.5px] h-2.5 ml-4 -skew-x-20"
+                              />
+                            </>
+                          ) : (
+                            <>
+                              <div
+                                style={{ backgroundColor: theme.colBorder }}
+                                className="w-[2.5px] h-2.5 ml-4 skew-x-20"
+                              />
+                              <div className="mb-1 w-full">{headerBox}</div>
+                              {subBonesList}
+                            </>
                           )}
                         </div>
-                      ))}
-                    </div>
-                  );
+                      );
+                    };
 
-                  return (
-                    <div
-                      key={pillar.id}
-                      className="flex flex-col items-start justify-end avoid-break"
-                    >
-                      {isTop ? (
-                        <>
-                          {subBonesList}
-                          <div className="mt-1 w-full">{headerBox}</div>
-                          <div
-                            style={{ backgroundColor: theme.colBorder }}
-                            className="w-[3px] h-4 ml-6 -skew-x-20"
-                          />
-                        </>
-                      ) : (
-                        <>
-                          <div
-                            style={{ backgroundColor: theme.colBorder }}
-                            className="w-[3px] h-4 ml-6 skew-x-20"
-                          />
-                          <div className="mb-1 w-full">{headerBox}</div>
-                          {subBonesList}
-                        </>
-                      )}
-                    </div>
-                  );
-                };
-
-                return (
-                  <div className="w-full py-2">
-                    <div className="flex items-center gap-0 w-full">
-                      {/* Left Tail + Ribs + Spine Column */}
-                      <div className="flex-1 min-w-0">
-                        {/* Top Ribs Row */}
+                    return (
+                      <div className="w-full">
                         <div
-                          className="grid gap-4 items-end pr-4"
+                          className="grid gap-2 items-end"
                           style={{
                             gridTemplateColumns: `repeat(${Math.max(
                               1,
@@ -1440,14 +1634,12 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                           )}
                         </div>
 
-                        {/* Central Horizontal Spine */}
-                        <div className="relative h-[5px] bg-[#1e3a8a] w-full flex items-center">
-                          <div className="w-3 h-3 rounded-full bg-[#1e3a8a] -ml-1" />
+                        <div className="relative h-[4px] bg-[#1e3a8a] w-full flex items-center my-0.5">
+                          <div className="w-2.5 h-2.5 rounded-full bg-[#1e3a8a]" />
                         </div>
 
-                        {/* Bottom Ribs Row */}
                         <div
-                          className="grid gap-4 items-start pr-4"
+                          className="grid gap-2 items-start"
                           style={{
                             gridTemplateColumns: `repeat(${Math.max(
                               1,
@@ -1460,243 +1652,233 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                           )}
                         </div>
                       </div>
+                    );
+                  })()
+                ) : (
+                  <div
+                    className="grid gap-2 items-start w-full"
+                    style={{
+                      gridTemplateColumns:
+                        targetPillars.length >= 4
+                          ? 'repeat(3, minmax(0, 1fr))'
+                          : `repeat(${Math.max(1, targetPillars.length)}, minmax(0, 1fr))`,
+                    }}
+                  >
+                    {targetPillars.map((pillar, pIdx) => {
+                      const theme =
+                        PRINT_COLUMN_THEMES[pIdx % PRINT_COLUMN_THEMES.length];
+                      const lvl2Nodes = pillar.children || [];
+                      return (
+                        <div
+                          key={pillar.id}
+                          className="flex flex-col items-center avoid-break"
+                        >
+                          <div
+                            style={{
+                              backgroundColor: theme.headerBg,
+                              padding: '5px 8px',
+                              fontSize: '10.5pt',
+                            }}
+                            className="w-full text-white rounded font-extrabold text-center"
+                          >
+                            {pIdx + 1}. {cleanNodeLabel(pillar.label)}
+                          </div>
 
-                      {/* Fish Head (Locked at right end of Central Spine) */}
-                      <div className="w-[210px] shrink-0 border-2 border-[#1e3a8a] bg-[#eff6ff] rounded-r-2xl rounded-l-md p-3 shadow-xs">
-                        <div className="text-[9.5px] font-mono font-bold uppercase text-[#1d4ed8]">
-                          ĐẦU XƯƠNG CÁ (CHỦ ĐỀ GỐC)
+                          {lvl2Nodes.map((lvl2, l2Idx) => (
+                            <React.Fragment key={lvl2.id}>
+                              <div className="flex flex-col items-center my-0.5">
+                                <div
+                                  style={{ backgroundColor: theme.colBorder }}
+                                  className="w-[2px] h-1.5"
+                                />
+                                <div
+                                  style={{ borderTopColor: theme.colBorder }}
+                                  className="w-0 h-0 border-l-[3.5px] border-l-transparent border-r-[3.5px] border-r-transparent border-t-[4px]"
+                                />
+                              </div>
+                              <div
+                                style={{
+                                  backgroundColor: theme.cardBg,
+                                  borderColor: theme.colBorder,
+                                  padding: '5px 8px',
+                                  lineHeight: 1.35,
+                                }}
+                                className="w-full border rounded text-left"
+                              >
+                                <div
+                                  style={{
+                                    color: theme.accentText,
+                                    fontSize: '10pt',
+                                  }}
+                                  className="font-bold border-b border-black/15 pb-0.5 mb-0.5"
+                                >
+                                  {pIdx + 1}.{l2Idx + 1}.{' '}
+                                  {renderPrintableKeywordText(lvl2.label)}
+                                </div>
+                                {lvl2.children && lvl2.children.length > 0 && (
+                                  <ul
+                                    style={{
+                                      fontSize: '9.5pt',
+                                      lineHeight: 1.35,
+                                    }}
+                                    className="space-y-0.5 text-[#111827]"
+                                  >
+                                    {lvl2.children.map((lvl3, l3Idx) => (
+                                      <li key={lvl3.id}>
+                                        <strong>{l3Idx + 1})</strong>{' '}
+                                        {renderPrintableKeywordText(lvl3.label)}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            </React.Fragment>
+                          ))}
                         </div>
-                        <div className="font-extrabold text-[13.5px] text-[#1e3a8a] leading-snug mt-0.5">
-                          {cleanNodeLabel(lRoot.label)}
-                        </div>
-                        {lRoot.summary && (
-                          <p className="text-[10.5px] text-neutral-800 mt-1 pt-1 border-t border-[#93c5fd] leading-snug">
-                            {lRoot.summary}
-                          </p>
-                        )}
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ================================================================= */}
+            {/* TEMPLATE 6: ✍️ 6. ĐỀ KHUYẾT CHỮ (HIGH-DENSITY WORKSHEET A4)       */}
+            {/* ================================================================= */}
+            {template === 'blank_worksheet' && (
+              <div className="bg-white text-[#111827]">
+                <div
+                  style={{ padding: '6px 10px', marginBottom: '6px' }}
+                  className="border-2 border-black bg-white"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[8.5pt] font-bold uppercase text-neutral-700">
+                        PHIẾU LUYỆN VIẾT TỰ LUẬN Y KHOA THEO BAREM · {sysName} ›{' '}
+                        {subName}
+                      </div>
+                      <h1
+                        style={{ fontSize: '11.5pt', lineHeight: 1.3 }}
+                        className="font-extrabold uppercase text-black mt-0.5"
+                      >
+                        {lessonHeaderPrefix}
+                      </h1>
+                    </div>
+                    <div
+                      style={{ padding: '3px 8px' }}
+                      className="border border-black text-center shrink-0 bg-neutral-50"
+                    >
+                      <div className="text-[8pt] font-bold uppercase">
+                        ĐIỂM TỰ CHẤM
+                      </div>
+                      <div className="text-[11pt] font-mono font-bold">
+                        ..... / {totalPointsScale.toFixed(1)}đ
                       </div>
                     </div>
                   </div>
-                );
-              })()
-            ) : (
-              /* 5B: TOP-DOWN VERTICAL FLOWCHART WITH ARROWS ON WHITE PAPER */
-              <div className="flex flex-col items-center w-full">
-                {/* Top Lesson Box */}
-                <div className="px-6 py-2.5 rounded-lg border-2 border-[#1e3a8a] bg-[#1e3a8a] text-white font-extrabold text-[15px] uppercase text-center">
-                  {cleanNodeLabel(lRoot.label)}
                 </div>
 
-                {lRoot.summary && (
-                  <>
-                    <div className="w-[2px] h-3 bg-[#1e3a8a]" />
-                    <div className="px-4 py-2 rounded-lg border border-[#1d4ed8] bg-[#eff6ff] text-[11.5px] text-[#1e293b] max-w-3xl text-center font-medium">
-                      <strong>Định nghĩa & Tổng quan:</strong> {lRoot.summary}
-                    </div>
-                  </>
-                )}
-
-                <div className="w-[2px] h-3.5 bg-[#1e3a8a]" />
-                <div className="w-full border-t-2 border-[#1e3a8a] mb-2" />
-
-                {/* Columns Row with Downward Arrows */}
-                <div
-                  className="grid gap-3 items-start w-full"
-                  style={{
-                    gridTemplateColumns:
-                      targetPillars.length >= 5
-                        ? 'repeat(3, minmax(0, 1fr))'
-                        : `repeat(${Math.max(1, targetPillars.length)}, minmax(0, 1fr))`,
-                  }}
-                >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {targetPillars.map((pillar, pIdx) => {
-                    const theme =
-                      PRINT_COLUMN_THEMES[pIdx % PRINT_COLUMN_THEMES.length];
-                    const lvl2Nodes = pillar.children || [];
+                    const pillarCriteria = rubricCriteria.filter(
+                      (c) => c.pillarIndex === pIdx + 1
+                    );
+                    const pillarPoints = pillarCriteria.reduce(
+                      (acc, c) => acc + c.allocatedPoints,
+                      0
+                    );
+
                     return (
                       <div
                         key={pillar.id}
-                        className="flex flex-col items-center avoid-break"
+                        style={{ padding: '6px 10px' }}
+                        className="border border-black avoid-break bg-white"
                       >
-                        <div
-                          style={{ backgroundColor: theme.headerBg }}
-                          className="w-full text-white px-3 py-2 rounded-lg font-extrabold text-[12.5px] text-center"
-                        >
-                          {pIdx + 1}. {cleanNodeLabel(pillar.label)}
+                        <div className="flex items-center justify-between gap-2 border-b border-black pb-1 mb-1.5">
+                          <h2
+                            style={{ fontSize: '11pt', lineHeight: 1.3 }}
+                            className="font-extrabold uppercase text-black"
+                          >
+                            CÂU / MỤC LỚN {pIdx + 1}:{' '}
+                            {cleanNodeLabel(pillar.label)}
+                          </h2>
+                          {worksheetShowKeywordCount && (
+                            <span className="font-mono text-[9pt] font-bold border border-black px-1.5 py-0.2">
+                              [ ..... / {pillarPoints.toFixed(2)}đ ]
+                            </span>
+                          )}
                         </div>
 
-                        {lvl2Nodes.map((lvl2, l2Idx) => (
-                          <React.Fragment key={lvl2.id}>
-                            <div className="flex flex-col items-center my-0.5">
+                        {worksheetShowLevel2 &&
+                        pillar.children &&
+                        pillar.children.length > 0 ? (
+                          <div className="space-y-2">
+                            {pillar.children.map((lvl2, l2Idx) => {
+                              const matchedCrit = rubricCriteria.find(
+                                (c) => c.nodeId === lvl2.id
+                              );
+                              return (
+                                <div key={lvl2.id} className="avoid-break">
+                                  <div className="flex items-center justify-between gap-2 mb-0.5">
+                                    <div
+                                      style={{
+                                        fontSize: '10pt',
+                                        lineHeight: 1.35,
+                                      }}
+                                      className="font-bold text-black"
+                                    >
+                                      {pIdx + 1}.{l2Idx + 1}.{' '}
+                                      {cleanNodeLabel(lvl2.label)}:
+                                    </div>
+                                    {worksheetShowKeywordCount &&
+                                      matchedCrit && (
+                                        <div className="text-[8.5pt] font-mono text-neutral-700">
+                                          ({matchedCrit.requiredKeywords.length}{' '}
+                                          từ khóa ·{' '}
+                                          {matchedCrit.allocatedPoints.toFixed(
+                                            2
+                                          )}
+                                          đ)
+                                        </div>
+                                      )}
+                                  </div>
+
+                                  <div className="space-y-2 pt-0.5">
+                                    {Array.from({
+                                      length: worksheetLinesPerItem,
+                                    }).map((_, lineIdx) => (
+                                      <div
+                                        key={lineIdx}
+                                        className="border-b border-dotted border-neutral-600 h-4 w-full"
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="space-y-2 pt-0.5">
+                            {Array.from({
+                              length: worksheetLinesPerItem * 2,
+                            }).map((_, lineIdx) => (
                               <div
-                                style={{ backgroundColor: theme.colBorder }}
-                                className="w-[2px] h-2.5"
+                                key={lineIdx}
+                                className="border-b border-dotted border-neutral-600 h-4 w-full"
                               />
-                              <div
-                                style={{ borderTopColor: theme.colBorder }}
-                                className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[5px]"
-                              />
-                            </div>
-                            <div
-                              style={{
-                                backgroundColor: theme.cardBg,
-                                borderColor: theme.colBorder,
-                              }}
-                              className="w-full border rounded-lg p-2 text-left"
-                            >
-                              <div
-                                style={{ color: theme.accentText }}
-                                className="font-bold text-[11.5px] border-b border-black/15 pb-1 mb-1"
-                              >
-                                {pIdx + 1}.{l2Idx + 1}.{' '}
-                                {renderPrintableKeywordText(lvl2.label)}
-                              </div>
-                              {lvl2.children && lvl2.children.length > 0 && (
-                                <ul className="space-y-0.5 text-[10.5px] text-[#111827]">
-                                  {lvl2.children.map((lvl3, l3Idx) => (
-                                    <li key={lvl3.id}>
-                                      <strong>{l3Idx + 1})</strong>{' '}
-                                      {renderPrintableKeywordText(lvl3.label)}
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </div>
-                          </React.Fragment>
-                        ))}
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
               </div>
             )}
-          </div>
-        )}
-
-        {/* ================================================================= */}
-        {/* TEMPLATE 6: ✍️ 6. ĐỀ KHUYẾT CHỮ (LUYỆN VIẾT TAY A4)               */}
-        {/* ================================================================= */}
-        {template === 'blank_worksheet' && (
-          <div className="bg-white text-[#111827]">
-            <div className="border-2 border-black p-4 mb-5 bg-white">
-              <div className="flex items-start justify-between gap-4 border-b border-black pb-3 mb-3">
-                <div>
-                  <div className="text-[11px] font-bold uppercase text-neutral-700">
-                    PHIẾU LUYỆN VIẾT TAY TỰ LUẬN Y KHOA THEO BAREM · {sysName} /{' '}
-                    {subName}
-                  </div>
-                  <h1 className="text-[19px] font-extrabold uppercase text-black mt-0.5">
-                    ĐỀ BÀI: TRÌNH BÀY {cleanNodeLabel(lRoot.label)}
-                  </h1>
-                </div>
-                <div className="border border-black px-3 py-1.5 text-center shrink-0 bg-neutral-50">
-                  <div className="text-[10px] font-bold uppercase">
-                    ĐIỂM TỰ CHẤM
-                  </div>
-                  <div className="text-[16px] font-mono font-bold mt-1">
-                    ....... / {totalPointsScale.toFixed(1)}đ
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4 text-[12px]">
-                <div>Ngày luyện viết: ....../....../202...</div>
-                <div>Thời gian làm bài: ......... phút</div>
-                <div>Lần ôn thứ: ....................</div>
-              </div>
-            </div>
-
-            <div className="space-y-5">
-              {targetPillars.map((pillar, pIdx) => {
-                const pillarCriteria = rubricCriteria.filter(
-                  (c) => c.pillarIndex === pIdx + 1
-                );
-                const pillarPoints = pillarCriteria.reduce(
-                  (acc, c) => acc + c.allocatedPoints,
-                  0
-                );
-
-                return (
-                  <div
-                    key={pillar.id}
-                    className="border border-black p-4 avoid-break bg-white"
-                  >
-                    <div className="flex items-center justify-between gap-2 border-b-2 border-black pb-1.5 mb-3">
-                      <h2 className="font-extrabold text-[14.5px] uppercase text-black">
-                        CÂU / MỤC LỚN {pIdx + 1}: {cleanNodeLabel(pillar.label)}
-                      </h2>
-                      {worksheetShowKeywordCount && (
-                        <span className="font-mono text-[12px] font-bold border border-black px-2 py-0.5">
-                          [ ....... / {pillarPoints.toFixed(2)} điểm ]
-                        </span>
-                      )}
-                    </div>
-
-                    {worksheetShowLevel2 &&
-                    pillar.children &&
-                    pillar.children.length > 0 ? (
-                      <div className="space-y-4">
-                        {pillar.children.map((lvl2, l2Idx) => {
-                          const matchedCrit = rubricCriteria.find(
-                            (c) => c.nodeId === lvl2.id
-                          );
-                          return (
-                            <div key={lvl2.id} className="avoid-break">
-                              <div className="flex items-center justify-between gap-2 mb-1.5">
-                                <div className="font-bold text-[13px] text-black">
-                                  {pIdx + 1}.{l2Idx + 1}.{' '}
-                                  {cleanNodeLabel(lvl2.label)}:
-                                </div>
-                                {worksheetShowKeywordCount && matchedCrit && (
-                                  <div className="text-[11px] font-mono text-neutral-700">
-                                    (Cần nêu đủ{' '}
-                                    <strong>
-                                      {matchedCrit.requiredKeywords.length} từ
-                                      khóa Barem
-                                    </strong>{' '}
-                                    · {matchedCrit.allocatedPoints.toFixed(2)}đ)
-                                    [ ... /{' '}
-                                    {matchedCrit.allocatedPoints.toFixed(2)}đ ]
-                                  </div>
-                                )}
-                              </div>
-
-                              <div className="space-y-3.5 pt-1">
-                                {Array.from({
-                                  length: worksheetLinesPerItem,
-                                }).map((_, lineIdx) => (
-                                  <div
-                                    key={lineIdx}
-                                    className="border-b border-dotted border-neutral-600 h-5 w-full"
-                                  />
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="space-y-4 pt-1">
-                        {Array.from({
-                          length: worksheetLinesPerItem * 3,
-                        }).map((_, lineIdx) => (
-                          <div
-                            key={lineIdx}
-                            className="border-b border-dotted border-neutral-600 h-5 w-full"
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
             {/* Screen-only visual page divider when batch-printing multiple lessons */}
             {lessonIndex < totalLessons - 1 && (
-              <div className="screen-page-divider my-8 py-2 border-y-2 border-dashed border-[#3b82f6] bg-[#eff6ff] text-center text-[11.5px] font-mono font-bold text-[#1d4ed8]">
+              <div className="screen-page-divider my-5 py-1.5 border-y-2 border-dashed border-[#3b82f6] bg-[#eff6ff] text-center text-[11px] font-mono font-bold text-[#1d4ed8]">
                 ✂️ ————— NGẮT TRANG A4 TỰ ĐỘNG · SANG BÀI HỌC TIẾP THEO (BÀI{' '}
                 {lessonIndex + 2}/{totalLessons}) —————
               </div>
@@ -1748,15 +1930,6 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={handleDownloadPrintableHtml}
-              className="px-3.5 py-2 rounded-xl bg-[#242528] hover:bg-[#2d2e30] border border-[#3c4043] text-[#e3e3e3] text-[12px] font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Tải file bản in A4 (.HTML) để mở hoặc gửi in trên mọi thiết bị"
-            >
-              <Download className="w-4 h-4 text-[#8ab4f8]" />
-              <span>📥 Tải File Bản In A4 ({lessonsToPrint.length} bài)</span>
-            </button>
-
             <button
               onClick={handlePrintA4}
               className="px-4 py-2 rounded-xl bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#131314] font-display font-bold text-[13px] flex items-center gap-1.5 shadow-lg transition-colors cursor-pointer"
@@ -2224,19 +2397,19 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
             {/* OPTIONAL COVER PAGE & TABLE OF CONTENTS (TRANG BÌA & MỤC LỤC)  */}
             {/* ============================================================= */}
             {includeCoverAndToc && (
-              <div className="a4-page-break pb-8 mb-8 bg-white text-[#111827]">
-                <div className="border-4 border-double border-[#1e3a8a] p-6 md:p-8 bg-white">
-                  <div className="text-center border-b-2 border-[#1e3a8a] pb-5 mb-6">
-                    <div className="text-[11px] font-mono font-bold uppercase tracking-widest text-[#1d4ed8]">
+              <div className="a4-page-break pb-4 mb-4 bg-white text-[#111827]">
+                <div className="border-2 border-[#1e3a8a] p-4 bg-white">
+                  <div className="text-center border-b-2 border-[#1e3a8a] pb-3 mb-3">
+                    <div className="text-[9pt] font-mono font-bold uppercase tracking-widest text-[#1d4ed8]">
                       MEDMIND STUDIO · HỆ THỐNG ĐỀ CƯƠNG TỰ LUẬN & SƠ ĐỒ Y KHOA CHUẨN BAREM
                     </div>
                     <input
                       type="text"
                       value={bookletTitle}
                       onChange={(e) => setBookletTitle(e.target.value)}
-                      className="w-full text-center text-[22px] font-extrabold uppercase text-[#1e3a8a] mt-2 bg-transparent border-b border-transparent hover:border-neutral-300 focus:border-[#1d4ed8] focus:outline-none"
+                      className="w-full text-center text-[14pt] font-extrabold uppercase text-[#1e3a8a] mt-1 bg-transparent border-b border-transparent hover:border-neutral-300 focus:border-[#1d4ed8] focus:outline-none"
                     />
-                    <div className="text-[13px] font-medium text-neutral-700 mt-1.5">
+                    <div className="text-[9.5pt] font-medium text-neutral-700 mt-1">
                       Tổng hợp {lessonsToPrint.length} bài học trọng tâm · Định dạng in:{' '}
                       <strong>
                         {template === 'barem_outline'
@@ -2255,27 +2428,45 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                   </div>
 
                   {/* Table of Contents */}
-                  <div className="mb-4">
-                    <h3 className="text-[14px] font-extrabold uppercase text-black mb-2.5">
+                  <div>
+                    <h3 className="text-[10.5pt] font-extrabold uppercase text-black mb-1.5">
                       📖 MỤC LỤC CÁC BÀI HỌC TRONG TẬP ĐỀ CƯƠNG ({lessonsToPrint.length} BÀI):
                     </h3>
-                    <table className="w-full border border-black text-[12.5px] bg-white text-black">
+                    <table
+                      style={{ fontSize: '9.5pt', lineHeight: 1.35 }}
+                      className="w-full border border-black bg-white text-black"
+                    >
                       <thead>
                         <tr className="bg-neutral-100 border-b-2 border-black font-bold">
-                          <th className="border border-black px-2.5 py-2 w-[48px] text-center">
+                          <th
+                            style={{ padding: '4px 6px' }}
+                            className="border border-black w-[42px] text-center"
+                          >
                             STT
                           </th>
-                          <th className="border border-black px-3 py-2 text-left">
+                          <th
+                            style={{ padding: '4px 8px' }}
+                            className="border border-black text-left"
+                          >
                             Tên Bài Học / Chủ Đề Tự Luận
                           </th>
-                          <th className="border border-black px-3 py-2 text-left w-[200px]">
+                          <th
+                            style={{ padding: '4px 8px' }}
+                            className="border border-black text-left w-[180px]"
+                          >
                             Học Phần / Chuyên Khoa
                           </th>
-                          <th className="border border-black px-2.5 py-2 text-center w-[95px]">
-                            Số Mục Lớn
+                          <th
+                            style={{ padding: '4px 6px' }}
+                            className="border border-black text-center w-[80px]"
+                          >
+                            Số Nhánh
                           </th>
-                          <th className="border border-black px-2.5 py-2 text-center w-[125px]">
-                            Tiến Độ Ôn Thi
+                          <th
+                            style={{ padding: '4px 6px' }}
+                            className="border border-black text-center w-[105px]"
+                          >
+                            Tiến Độ Ôn
                           </th>
                         </tr>
                       </thead>
@@ -2288,21 +2479,36 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                           return (
                             <tr
                               key={l?.id || `toc-${idx}`}
-                              className="border-b border-black"
+                              className="border-b border-black avoid-break"
                             >
-                              <td className="border border-black px-2 py-2 text-center font-mono font-bold">
+                              <td
+                                style={{ padding: '4px 6px' }}
+                                className="border border-black text-center font-mono font-bold"
+                              >
                                 {String(idx + 1).padStart(2, '0')}
                               </td>
-                              <td className="border border-black px-3 py-2 font-bold text-[#111827]">
+                              <td
+                                style={{ padding: '4px 8px' }}
+                                className="border border-black font-bold text-[#111827]"
+                              >
                                 {l?.title || `Bài học ${idx + 1}`}
                               </td>
-                              <td className="border border-black px-3 py-2 text-neutral-700 text-[11.5px]">
+                              <td
+                                style={{ padding: '4px 8px' }}
+                                className="border border-black text-neutral-700 text-[9pt]"
+                              >
                                 {sysName} › {subName}
                               </td>
-                              <td className="border border-black px-2.5 py-2 text-center font-mono">
+                              <td
+                                style={{ padding: '4px 6px' }}
+                                className="border border-black text-center font-mono"
+                              >
                                 {pillarCount} nhánh
                               </td>
-                              <td className="border border-black px-2.5 py-2 text-center font-mono text-[11px]">
+                              <td
+                                style={{ padding: '4px 6px' }}
+                                className="border border-black text-center font-mono text-[8.5pt]"
+                              >
                                 [ ] Lần 1 &nbsp; [ ] Thuộc
                               </td>
                             </tr>
@@ -2313,7 +2519,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                   </div>
                 </div>
 
-                <div className="screen-page-divider mt-8 py-2 border-y-2 border-dashed border-[#3b82f6] bg-[#eff6ff] text-center text-[11.5px] font-mono font-bold text-[#1d4ed8]">
+                <div className="screen-page-divider mt-4 py-1.5 border-y-2 border-dashed border-[#3b82f6] bg-[#eff6ff] text-center text-[11px] font-mono font-bold text-[#1d4ed8]">
                   ✂️ ————— HẾT TRANG BÌA & MỤC LỤC · BẮT ĐẦU NỘI DUNG BÀI HỌC 01 —————
                 </div>
               </div>
@@ -2322,7 +2528,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
             {/* ============================================================= */}
             {/* SEQUENTIAL MULTI-LESSON RENDERER WITH PAGE BREAKS             */}
             {/* ============================================================= */}
-            <div className="space-y-8 bg-white text-[#111827]">
+            <div className="space-y-4 bg-white text-[#111827]">
               {lessonsToPrint.map((lesson, idx) =>
                 renderSingleLessonTemplate(lesson, idx, lessonsToPrint.length)
               )}
@@ -2332,7 +2538,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
 
         <style>{`
           @page {
-            size: A4 ${isLandscape ? 'landscape' : 'portrait'};
+            size: A4;
             margin: 10mm;
           }
           @media print {
