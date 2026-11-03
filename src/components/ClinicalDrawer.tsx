@@ -15,6 +15,9 @@ import {
   RotateCcw,
   Circle,
   FileText,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from 'lucide-react';
 import {
   MindmapNode,
@@ -23,6 +26,7 @@ import {
   NodeMasteryStatus,
   LEVEL1_PILLAR_ACCENTS,
 } from '../types/mindmap';
+import { sortMindmapTreeForPrint } from '../utils/mindmapLayout';
 
 interface ClinicalDrawerProps {
   node: MindmapNode;
@@ -520,6 +524,97 @@ const ClinicalDrawerComponent: React.FC<ClinicalDrawerProps> = ({
                     + Thêm ghi chú lâm sàng & nhãn Y khoa
                   </button>
                 )}
+              </div>
+            )}
+
+            {/* Reorder Direct Child Branches (when node has >= 2 children) */}
+            {!isReadOnly && node.children && node.children.length > 1 && (
+              <div className="p-3.5 rounded-xl bg-[#131314] border border-[#2d2e30] space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-[12px] font-display font-semibold text-white flex items-center gap-1.5">
+                    <ArrowUpDown className="w-3.5 h-3.5 text-[#8ab4f8]" />
+                    <span>
+                      Sắp xếp các nhánh con ({node.children.length} mục)
+                    </span>
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateNode(node.id, (prev) =>
+                        sortMindmapTreeForPrint(prev, 'medical_standard', depth)
+                      );
+                    }}
+                    title="Tự động sắp xếp theo số thứ tự (1 ➔ 2 ➔ 3) và trình tự bệnh học chuẩn"
+                    className="px-2 py-1 rounded-md bg-[#3f3c5c] hover:bg-[#4e4a70] text-[#8ab4f8] text-[11px] font-semibold cursor-pointer"
+                  >
+                    🔢 Tự xếp chuẩn
+                  </button>
+                </div>
+
+                <div className="max-h-[210px] overflow-y-auto space-y-1 pr-1">
+                  {node.children.map((child, cIdx) => (
+                    <div
+                      key={child.id || cIdx}
+                      className="flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1e1f20] border border-[#2d2e30] text-[12px]"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onSelectBreadcrumbNode(child.id)}
+                        className="text-left truncate flex-1 text-[#e3e3e3] hover:text-[#8ab4f8] cursor-pointer"
+                      >
+                        <span className="font-mono text-[#8ab4f8] mr-1.5 font-semibold">
+                          {cIdx + 1}.
+                        </span>
+                        {child.label}
+                      </button>
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <button
+                          type="button"
+                          disabled={cIdx === 0}
+                          onClick={() => {
+                            onUpdateNode(node.id, (prev) => {
+                              const arr = [...(prev.children || [])];
+                              if (cIdx <= 0 || cIdx >= arr.length) return prev;
+                              const tmp = arr[cIdx];
+                              arr[cIdx] = arr[cIdx - 1];
+                              arr[cIdx - 1] = tmp;
+                              return { ...prev, children: arr };
+                            });
+                          }}
+                          title="Đưa mục này lên trên"
+                          className={`p-1 rounded hover:bg-[#3c4043] text-[#9aa0a6] hover:text-white cursor-pointer ${
+                            cIdx === 0 ? 'opacity-30 cursor-not-allowed' : ''
+                          }`}
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={cIdx === (node.children?.length || 0) - 1}
+                          onClick={() => {
+                            onUpdateNode(node.id, (prev) => {
+                              const arr = [...(prev.children || [])];
+                              if (cIdx < 0 || cIdx >= arr.length - 1)
+                                return prev;
+                              const tmp = arr[cIdx];
+                              arr[cIdx] = arr[cIdx + 1];
+                              arr[cIdx + 1] = tmp;
+                              return { ...prev, children: arr };
+                            });
+                          }}
+                          title="Đưa mục này xuống dưới"
+                          className={`p-1 rounded hover:bg-[#3c4043] text-[#9aa0a6] hover:text-white cursor-pointer ${
+                            cIdx === (node.children?.length || 0) - 1
+                              ? 'opacity-30 cursor-not-allowed'
+                              : ''
+                          }`}
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 

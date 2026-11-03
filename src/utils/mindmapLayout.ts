@@ -78,16 +78,221 @@ export function hasLeadingNumberPrefix(label: string): boolean {
 }
 
 /**
- * Strips leading numbering or bullet characters (e.g., "1. ", "1.1. ", "• ") for clean rubric/print display
+ * Strips leading numbering or bullet characters (e.g., "1. ", "1.1. ", "I. ", "A. ", "a) ", "• ") for clean rubric/print display
  */
 export function cleanNodeLabel(label: unknown): string {
   if (label === null || label === undefined) return '';
   const str = typeof label === 'string' ? label : String(label);
   if (!str) return '';
   return str
-    .replace(/^\s*(?:\d+(?:\.\d+)*[\.\)\-:]?\s*|[IVX]+[\.\)\-:]\s*|[•◦▪➔\-+*]\s*)+/i, '')
+    .replace(
+      /^\s*(?:(?:Mục|Phần|Ý)\s+\d+[\.\)\-:]?\s*|\d+(?:\.\d+)*[\.\)\-:]?\s*|[IVX]+[\.\)\-:]\s*|[A-Da-d][\.\)]\s+|[•◦▪➔\-+*]\s*)+/i,
+      ''
+    )
     .trim();
 }
+
+/**
+ * Extracts explicit question/lesson number from titles like:
+ * "Câu 1: ...", "Câu 13 - ...", "Bài 02: ...", "Chủ đề 5.", "10. Dị vật..."
+ */
+export function extractNaturalLessonNumber(title: unknown): number | null {
+  if (!title) return null;
+  const s = String(title).trim();
+  const matchNamed = s.match(
+    /^(?:câu|bài|chủ\s*đề|vấn\s*đề|chương|trạm|ca)\s*0*(\d+)\b/i
+  );
+  if (matchNamed) {
+    return parseInt(matchNamed[1], 10);
+  }
+  const matchLeadingNum = s.match(/^0*(\d+)[\.\)\-:]/);
+  if (matchLeadingNum) {
+    return parseInt(matchLeadingNum[1], 10);
+  }
+  return null;
+}
+
+const viCollator = new Intl.Collator('vi', {
+  numeric: true,
+  sensitivity: 'base',
+});
+
+/**
+ * Natural comparator for lessons so "Câu 1", "Câu 2", ..., "Câu 10", "Câu 13"
+ * always sort in clean ascending order (1 -> 2 -> ... -> 13).
+ */
+export function compareLessonsNaturally(
+  a: { title?: string; rootNode?: { label?: string } },
+  b: { title?: string; rootNode?: { label?: string } }
+): number {
+  const titleA = String(a?.title || a?.rootNode?.label || '').trim();
+  const titleB = String(b?.title || b?.rootNode?.label || '').trim();
+
+  const numA = extractNaturalLessonNumber(titleA);
+  const numB = extractNaturalLessonNumber(titleB);
+
+  if (numA !== null && numB !== null && numA !== numB) {
+    return numA - numB;
+  }
+  if (numA !== null && numB === null) return -1;
+  if (numA === null && numB !== null) return 1;
+
+  return viCollator.compare(titleA, titleB);
+}
+
+/**
+ * Formats a lesson's display title for Print Studio headers and Table of Contents
+ * WITHOUT duplicating prefixes like "BÀI 4: CÂU 10: ...".
+ */
+export function formatCleanLessonHeading(
+  lessonTitle: unknown,
+  rootLabel: unknown,
+  fallbackIndex: number
+): {
+  fullHeading: string;
+  shortBadge: string;
+  cleanTopicTitle: string;
+} {
+  const rawTitle = String(lessonTitle || rootLabel || '').trim();
+  const explicitNum = extractNaturalLessonNumber(rawTitle);
+
+  // Check if rawTitle already starts with "Câu X", "Bài X", "Chủ đề X"
+  const prefixMatch = rawTitle.match(
+    /^((?:câu|bài|chủ\s*đề|vấn\s*đề|trạm)\s*\d+)\s*[\.\)\-:]?\s*(.*)$/i
+  );
+  if (prefixMatch) {
+    const badgeRaw = prefixMatch[1].toUpperCase().replace(/\s+/g, ' ');
+    const topicPart = prefixMatch[2].trim() || rawTitle;
+    return {
+      fullHeading: `${badgeRaw}: ${topicPart}`,
+      shortBadge: badgeRaw,
+      cleanTopicTitle: topicPart,
+    };
+  }
+
+  // Check if rawTitle starts with "1. Topic..."
+  const leadingNumMatch = rawTitle.match(/^(\d+)\s*[\.\)\-:]\s*(.+)$/);
+  if (leadingNumMatch) {
+    const n = parseInt(leadingNumMatch[1], 10);
+    const topicPart = leadingNumMatch[2].trim();
+    return {
+      fullHeading: `CÂU ${n}: ${topicPart}`,
+      shortBadge: `CÂU ${String(n).padStart(2, '0')}`,
+      cleanTopicTitle: topicPart,
+    };
+  }
+
+  const cleanTopic = cleanNodeLabel(rawTitle || rootLabel) || `Bài học ${fallbackIndex + 1}`;
+  const displayNum = explicitNum ?? fallbackIndex + 1;
+  return {
+    fullHeading: `BÀI ${displayNum}: ${cleanTopic}`,
+    shortBadge: `BÀI ${String(displayNum).padStart(2, '0')}`,
+    cleanTopicTitle: cleanTopic,
+  };
+}
+
+/**
+ * Extracts leading outline numbers or letters from a node label (e.g. "2.1.", "1.", "A.", "I.")
+ * for sorting sibling branches inside a lesson.
+ */
+function extractNodeOutlineOrderKey(label: unknown): number | null {
+  if (!label) return null;
+  const s = String(label).trim();
+  const decMatch = s.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?[\.\)\-:\s]/);
+  if (decMatch) {
+    const p1 = parseInt(decMatch[1], 10);
+    const p2 = decMatch[2] ? parseInt(decMatch[2], 10) : 0;
+    const p3 = decMatch[3] ? parseInt(decMatch[3], 10) : 0;
+    return p1 * 10000 + p2 * 100 + p3;
+  }
+  const letterMatch = s.match(/^([A-Da-d])[\.\)]\s+/);
+  if (letterMatch) {
+    return letterMatch[1].toUpperCase().charCodeAt(0) - 64;
+  }
+  return null;
+}
+
+/**
+ * Standard medical textbook section priority for Level 1 pillars
+ * (Định nghĩa/Đại cương -> Dịch tễ -> Nguyên nhân/Bệnh sinh -> Giải phẫu bệnh -> Triệu chứng/Lâm sàng -> Cận lâm sàng -> Chẩn đoán -> Biến chứng -> Điều trị/Xử trí -> Tiên lượng/Phòng bệnh)
+ */
+function getMedicalPillarPriority(label: unknown): number {
+  const s = cleanNodeLabel(label).toLowerCase();
+  if (/(định nghĩa|đại cương|khái niệm|tổng quan|nhắc lại giải phẫu|sinh lý)/.test(s)) return 10;
+  if (/(dịch tễ|tần suất|phân loại|thể lâm sàng)/.test(s)) return 20;
+  if (/(nguyên nhân|căn nguyên|yếu tố nguy cơ|yếu tố thuận lợi|cơ chế|bệnh sinh|sinh bệnh học)/.test(s)) return 30;
+  if (/(giải phẫu bệnh|tổn thương|vi thể|đại thể)/.test(s)) return 40;
+  if (/(triệu chứng|lâm sàng|biểu hiện|khởi phát|toàn phát|diễn biến|thực thể|cơ năng)/.test(s)) return 50;
+  if (/(cận lâm sàng|xét nghiệm|hình ảnh|x\s*quang|ct|mri|nội soi|siêu âm)/.test(s)) return 60;
+  if (/(chẩn đoán|tiêu chuẩn|phân biệt)/.test(s)) return 70;
+  if (/(biến chứng|hậu quả)/.test(s)) return 80;
+  if (/(điều trị|xử trí|phác đồ|phẫu thuật|thuốc|nguyên tắc)/.test(s)) return 90;
+  if (/(tiên lượng|phòng bệnh|dự phòng|theo dõi)/.test(s)) return 100;
+  return 999;
+}
+
+/**
+ * Recursively sorts a MindmapNode's children according to `mode`:
+ * - 'keep': preserves exact canvas order
+ * - 'natural_number': sorts siblings that have explicit numbering (1 -> 2 -> 3, 2.1 -> 2.2) while preserving relative order of unnumbered nodes
+ * - 'medical_standard': sorts Level 1 pillars by standard medical textbook sequence (Định nghĩa -> Nguyên nhân -> Triệu chứng -> Chẩn đoán -> Điều trị) and sorts sub-branches by natural number
+ */
+export function sortMindmapTreeForPrint(
+  node: MindmapNode,
+  mode: 'keep' | 'natural_number' | 'medical_standard' = 'natural_number',
+  depth = 0
+): MindmapNode {
+  if (!node || !Array.isArray(node.children) || node.children.length === 0) {
+    return node;
+  }
+
+  const childrenCopy = node.children.map((child) =>
+    sortMindmapTreeForPrint(child, mode, depth + 1)
+  );
+
+  if (mode === 'keep') {
+    return { ...node, children: childrenCopy };
+  }
+
+  // Check if at least 2 siblings have explicit numbering
+  const numberedCount = childrenCopy.filter(
+    (c) => extractNodeOutlineOrderKey(c.label) !== null
+  ).length;
+
+  const sortedChildren = [...childrenCopy]
+    .map((item, idx) => ({ item, idx }))
+    .sort((a, b) => {
+      if (mode === 'medical_standard' && depth === 0) {
+        const keyA = extractNodeOutlineOrderKey(a.item.label);
+        const keyB = extractNodeOutlineOrderKey(b.item.label);
+        if (keyA !== null && keyB !== null && keyA !== keyB) {
+          return keyA - keyB;
+        }
+        const prioA = getMedicalPillarPriority(a.item.label);
+        const prioB = getMedicalPillarPriority(b.item.label);
+        if (prioA !== prioB) {
+          return prioA - prioB;
+        }
+      }
+
+      if (numberedCount >= 2) {
+        const keyA = extractNodeOutlineOrderKey(a.item.label);
+        const keyB = extractNodeOutlineOrderKey(b.item.label);
+        if (keyA !== null && keyB !== null && keyA !== keyB) {
+          return keyA - keyB;
+        }
+      }
+
+      return a.idx - b.idx;
+    })
+    .map((entry) => entry.item);
+
+  return {
+    ...node,
+    children: sortedChildren,
+  };
+}
+
 
 /**
  * Estimates node dimensions based on depth, label length, summary, and whether semantic badges are visible.

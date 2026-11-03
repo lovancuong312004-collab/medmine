@@ -26,6 +26,9 @@ import {
   PanelLeftOpen,
   Lock,
   AlertTriangle,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from 'lucide-react';
 import {
   MedMindDatabase,
@@ -49,6 +52,8 @@ interface SidebarCurriculumProps {
   onRenameLesson: (lessonId: string, newTitle: string) => void;
   onDeleteLesson: (lessonId: string) => void;
   onUpdateLessonStatus: (lessonId: string, status: LessonStudyStatus) => void;
+  onSortLessonsNaturally?: (subjectId?: string) => void;
+  onMoveLessonOrder?: (lessonId: string, direction: 'up' | 'down') => void;
   onOpenImporter: () => void;
   onOpenCloudModal: () => void;
   onExportDatabaseJson: () => void;
@@ -85,6 +90,8 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
   onRenameLesson,
   onDeleteLesson,
   onUpdateLessonStatus,
+  onSortLessonsNaturally,
+  onMoveLessonOrder,
   onOpenImporter,
   onOpenCloudModal,
   onExportDatabaseJson,
@@ -416,24 +423,40 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
 
         {/* 3-Tier Curriculum Tree Header */}
         <div
-          className={`px-4 py-2 flex items-center justify-between text-[11px] font-medium border-b ${
+          className={`px-3 py-2 flex items-center justify-between gap-1 text-[11px] font-medium border-b ${
             isLight
               ? 'text-slate-500 border-slate-200 bg-slate-50/60'
               : 'text-[#9aa0a6] border-[#2d2e30]/60'
           }`}
         >
-          <span>HỆ CƠ QUAN / HỌC PHẦN / BÀI HỌC</span>
+          <span className="truncate">HỆ / HỌC PHẦN / BÀI HỌC</span>
           {!isReadOnly && (
-            <button
-              onClick={() => setAddingSystem(true)}
-              title="Thêm Khối / Hệ cơ quan mới (Tầng 1)"
-              className={`flex items-center gap-1 hover:underline cursor-pointer ${
-                isLight ? 'text-blue-600 font-semibold' : 'text-[#8ab4f8]'
-              }`}
-            >
-              <FolderPlus className="w-3.5 h-3.5" />
-              <span>+ Hệ mới</span>
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              {onSortLessonsNaturally && database.lessons.length > 1 && (
+                <button
+                  onClick={() => onSortLessonsNaturally()}
+                  title="Tự động sắp xếp tất cả bài học theo đúng thứ tự Câu 1 ➔ Câu N"
+                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                    isLight
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 font-semibold'
+                      : 'bg-[#242528] border-[#3c4043] text-[#8ab4f8] hover:bg-[#2d2e30]'
+                  }`}
+                >
+                  <ArrowUpDown className="w-3 h-3" />
+                  <span>Xếp Câu 1➔N</span>
+                </button>
+              )}
+              <button
+                onClick={() => setAddingSystem(true)}
+                title="Thêm Khối / Hệ cơ quan mới (Tầng 1)"
+                className={`flex items-center gap-1 hover:underline cursor-pointer ${
+                  isLight ? 'text-blue-600 font-semibold' : 'text-[#8ab4f8]'
+                }`}
+              >
+                <FolderPlus className="w-3.5 h-3.5" />
+                <span>+ Hệ mới</span>
+              </button>
+            </div>
           )}
         </div>
 
@@ -737,6 +760,19 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
                               </span>
                               {!isReadOnly && !isEditingSubject && (
                                 <div className="opacity-0 group-hover/sub:opacity-100 flex items-center gap-0.5 transition-opacity">
+                                  {onSortLessonsNaturally &&
+                                    subjectLessons.length > 1 && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onSortLessonsNaturally(subject.id);
+                                        }}
+                                        title="Sắp xếp các câu trong Học phần này theo thứ tự Câu 1 ➔ Câu N"
+                                        className="p-0.5 rounded hover:bg-[#3c4043] text-[#8ab4f8] hover:text-white cursor-pointer"
+                                      >
+                                        <ArrowUpDown className="w-2.5 h-2.5" />
+                                      </button>
+                                    )}
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -785,7 +821,7 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
                                   : 'border-[#2d2e30]/70'
                               }`}
                             >
-                              {subjectLessons.map((lesson) => {
+                              {subjectLessons.map((lesson, lessonIdx) => {
                                 const isActive = lesson.id === activeLessonId;
                                 const stats = calculateMasteryStats(
                                   lesson.rootNode
@@ -872,6 +908,51 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
 
                                       {!isReadOnly && !isEditingLesson && (
                                         <div className="opacity-0 group-hover/lesson:opacity-100 flex items-center gap-0.5 transition-opacity shrink-0">
+                                          {onMoveLessonOrder &&
+                                            subjectLessons.length > 1 && (
+                                              <>
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onMoveLessonOrder(
+                                                      lesson.id,
+                                                      'up'
+                                                    );
+                                                  }}
+                                                  disabled={lessonIdx === 0}
+                                                  title="Chuyển bài học lên trên"
+                                                  className={`p-1 rounded hover:bg-[#3c4043] text-[#9aa0a6] hover:text-white cursor-pointer ${
+                                                    lessonIdx === 0
+                                                      ? 'opacity-30 cursor-not-allowed'
+                                                      : ''
+                                                  }`}
+                                                >
+                                                  <ArrowUp className="w-3 h-3" />
+                                                </button>
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onMoveLessonOrder(
+                                                      lesson.id,
+                                                      'down'
+                                                    );
+                                                  }}
+                                                  disabled={
+                                                    lessonIdx ===
+                                                    subjectLessons.length - 1
+                                                  }
+                                                  title="Chuyển bài học xuống dưới"
+                                                  className={`p-1 rounded hover:bg-[#3c4043] text-[#9aa0a6] hover:text-white cursor-pointer ${
+                                                    lessonIdx ===
+                                                    subjectLessons.length - 1
+                                                      ? 'opacity-30 cursor-not-allowed'
+                                                      : ''
+                                                  }`}
+                                                >
+                                                  <ArrowDown className="w-3 h-3" />
+                                                </button>
+                                              </>
+                                            )}
                                           <button
                                             onClick={(e) => {
                                               e.stopPropagation();

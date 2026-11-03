@@ -40,6 +40,7 @@ import {
   calculateMasteryStats,
   parseAndValidateAIJson,
   synchronizeMindmapNode,
+  compareLessonsNaturally,
 } from './utils/mindmapLayout';
 import {
   getEffectiveSupabaseConfig,
@@ -838,17 +839,114 @@ export default function App() {
     };
 
     setDatabase((prev) => {
+      const combined = [...prev.lessons, newLesson];
+      // Automatically keep lessons within the target subject sorted in natural order (Câu 1 -> Câu 2 -> ... -> Câu N)
+      const inTargetSub = combined
+        .filter((l) => l.subjectId === payload.subjectId)
+        .sort(compareLessonsNaturally);
+      let cursor = 0;
+      const reordered = combined.map((l) =>
+        l.subjectId === payload.subjectId ? inTargetSub[cursor++] : l
+      );
+
       const nextDb: MedMindDatabase = {
         ...prev,
-        lessons: [newLesson, ...prev.lessons],
+        lessons: reordered,
       };
       triggerBackgroundCloudPush(nextDb);
       return nextDb;
     });
     setActiveLessonId(newLesson.id);
     setSelectedNodeId(newLesson.rootNode.id);
-    showToast(`Đã dựng sơ đồ tư duy "${newLesson.title}" & tự động đồng bộ Cloud!`);
+    showToast(`Đã dựng sơ đồ tư duy "${newLesson.title}" & tự động sắp xếp theo thứ tự câu!`);
   };
+
+  /**
+   * Sort lessons in natural ascending order (Câu 1 -> Câu 2 -> ... -> Câu N)
+   * either within a specific subjectId or across all subjects.
+   */
+  const handleSortLessonsNaturally = useCallback(
+    (targetSubjectId?: string) => {
+      if (isReadOnly) return;
+      setDatabase((prev) => {
+        let nextLessons = [...prev.lessons];
+        if (targetSubjectId) {
+          const subjectGroup = nextLessons
+            .filter((l) => l.subjectId === targetSubjectId)
+            .sort(compareLessonsNaturally);
+          let idx = 0;
+          nextLessons = nextLessons.map((l) =>
+            l.subjectId === targetSubjectId ? subjectGroup[idx++] : l
+          );
+        } else {
+          // Sort within each subject group naturally
+          const bySubject = new Map<string, LessonMindmap[]>();
+          nextLessons.forEach((l) => {
+            const list = bySubject.get(l.subjectId) || [];
+            list.push(l);
+            bySubject.set(l.subjectId, list);
+          });
+          bySubject.forEach((list, k) => {
+            bySubject.set(k, [...list].sort(compareLessonsNaturally));
+          });
+          const cursors = new Map<string, number>();
+          nextLessons = nextLessons.map((l) => {
+            const c = cursors.get(l.subjectId) || 0;
+            cursors.set(l.subjectId, c + 1);
+            const group = bySubject.get(l.subjectId);
+            return group ? group[c] : l;
+          });
+        }
+
+        const nextDb: MedMindDatabase = {
+          ...prev,
+          lessons: nextLessons,
+        };
+        triggerBackgroundCloudPush(nextDb);
+        return nextDb;
+      });
+      showToast('Đã sắp xếp các bài học theo đúng thứ tự Câu 1 ➔ Câu N!');
+    },
+    [isReadOnly, triggerBackgroundCloudPush, showToast]
+  );
+
+  /**
+   * Move a lesson Up or Down within its Subject list
+   */
+  const handleMoveLessonOrder = useCallback(
+    (lessonId: string, direction: 'up' | 'down') => {
+      if (isReadOnly) return;
+      setDatabase((prev) => {
+        const target = prev.lessons.find((l) => l.id === lessonId);
+        if (!target) return prev;
+        const subjectLessons = prev.lessons.filter(
+          (l) => l.subjectId === target.subjectId
+        );
+        const pos = subjectLessons.findIndex((l) => l.id === lessonId);
+        if (pos === -1) return prev;
+        const swapPos = direction === 'up' ? pos - 1 : pos + 1;
+        if (swapPos < 0 || swapPos >= subjectLessons.length) return prev;
+
+        const reorderedSub = [...subjectLessons];
+        const temp = reorderedSub[pos];
+        reorderedSub[pos] = reorderedSub[swapPos];
+        reorderedSub[swapPos] = temp;
+
+        let cursor = 0;
+        const nextLessons = prev.lessons.map((l) =>
+          l.subjectId === target.subjectId ? reorderedSub[cursor++] : l
+        );
+
+        const nextDb: MedMindDatabase = {
+          ...prev,
+          lessons: nextLessons,
+        };
+        triggerBackgroundCloudPush(nextDb);
+        return nextDb;
+      });
+    },
+    [isReadOnly, triggerBackgroundCloudPush]
+  );
 
   const handleUpdateSecuritySettings = (newSecurity: SecuritySettings) => {
     if (isReadOnly) return;
@@ -1022,6 +1120,8 @@ export default function App() {
           onRenameLesson={handleRenameLesson}
           onDeleteLesson={handleDeleteLesson}
           onUpdateLessonStatus={handleUpdateLessonStatus}
+          onSortLessonsNaturally={handleSortLessonsNaturally}
+          onMoveLessonOrder={handleMoveLessonOrder}
           onOpenImporter={() => !isReadOnly && setIsImporterOpen(true)}
           onOpenCloudModal={() => setIsCloudModalOpen(true)}
           onExportDatabaseJson={handleExportDatabaseJson}
@@ -1407,6 +1507,8 @@ export default function App() {
           systemName={activeSystem?.name}
           subjectName={activeSubject?.name}
           rootNode={activeLesson.rootNode}
+          onSortLessonsNaturally={handleSortLessonsNaturally}
+          onMoveLessonOrder={handleMoveLessonOrder}
           onClose={() => setIsPrintStudioOpen(false)}
         />
       )}
