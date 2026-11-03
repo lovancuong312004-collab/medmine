@@ -148,11 +148,14 @@ export interface TocPillarPageMeta {
   keywordsCount: number;
   points: number;
   pageNumber: number;
+  offsetRatio: number;
 }
 
 export interface TocLessonPageMeta {
   lessonId: string;
+  sectionKey: string;
   lessonIndex: number;
+  naturalNum: number | null;
   title: string;
   shortBadge: string;
   cleanTopicTitle: string;
@@ -946,8 +949,9 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
               lvl3Count,
               rubricCount: pillarRubrics.length,
               keywordsCount: pillarKeywords,
-              points: pillarPoints,
+              points: Number.isFinite(pillarPoints) ? pillarPoints : 0,
               pageNumber: prevUnits, // normalized to actual lessonPageCount below
+              offsetRatio: 0,
             };
           }
         );
@@ -956,8 +960,11 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
           1,
           Math.ceil(accumulatedUnits / 100)
         );
+        const sectionKey = normalizedLesson.id || `lesson-${idx}`;
         const lessonPageCount =
-          measuredSectionPages[normalizedLesson.id] || heuristicLessonPages;
+          measuredSectionPages[sectionKey] ||
+          measuredSectionPages[normalizedLesson.id] ||
+          heuristicLessonPages;
         const lessonEndPage = lessonStartPage + lessonPageCount - 1;
         runningCurrentPage = lessonEndPage + 1;
 
@@ -965,8 +972,9 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
         const totalUnits = Math.max(1, accumulatedUnits);
         pillarsMeta.forEach((p) => {
           const ratio = Math.min(0.99, Math.max(0, p.pageNumber / totalUnits));
+          p.offsetRatio = Number.isFinite(ratio) ? ratio : 0;
           p.pageNumber =
-            lessonStartPage + Math.floor(ratio * lessonPageCount);
+            lessonStartPage + Math.floor(p.offsetRatio * lessonPageCount);
         });
 
         const lessonKeywordsCount = rubricCriteria.reduce(
@@ -993,8 +1001,10 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
               ).padStart(2, '0')}`;
 
         return {
-          lessonId: normalizedLesson.id || `lesson-${idx}`,
+          lessonId: sectionKey,
+          sectionKey,
           lessonIndex: idx,
+          naturalNum: headingInfo.naturalNum ?? null,
           title: headingInfo.fullHeading,
           shortBadge: headingInfo.shortBadge,
           cleanTopicTitle: headingInfo.cleanTopicTitle,
@@ -1005,7 +1015,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
           lvl2TotalCount,
           rubricItemsCount: rubricCriteria.length,
           keywordsCount: lessonKeywordsCount,
-          totalPoints: totalPointsScale,
+          totalPoints: Number.isFinite(totalPointsScale) ? totalPointsScale : 5,
           startPage: lessonStartPage,
           endPage: lessonEndPage,
           pageCount: lessonPageCount,
@@ -1135,8 +1145,19 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
     setPdfExportSuccessMsg(null);
     setPdfExportProgress('Đang chuẩn bị bố cục trang A4...');
 
+    const rootEl = printSheetRef.current;
+    const prevZoom = rootEl.style.zoom;
+
     try {
-      const rootEl = printSheetRef.current;
+      // Normalize CSS zoom to 1 during html2canvas capture so page slicing is 100% accurate
+      rootEl.style.zoom = '1';
+
+      // Sync input values to DOM attributes so html2canvas renders editable titles reliably
+      const inputs = rootEl.querySelectorAll<HTMLInputElement>('input');
+      inputs.forEach((inp) => {
+        inp.setAttribute('value', inp.value);
+      });
+
       const sectionNodes = Array.from(
         rootEl.querySelectorAll<HTMLElement>('.a4-print-section')
       );
@@ -1252,6 +1273,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
         let runningPage = tocActualPages + 1;
         const lessonSlicesList: RenderedPageSlice[][] = [];
         const realLessonRanges: {
+          secKey: string;
           startPage: number;
           endPage: number;
           pageCount: number;
@@ -1285,18 +1307,28 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
           const endP = startP + count - 1;
           runningPage = endP + 1;
 
+          // Update lesson header badge with full verified start..end range if multi-page
+          const rangeLabel =
+            startP === endP
+              ? `Tr. ${String(startP).padStart(2, '0')}`
+              : `Tr. ${String(startP).padStart(2, '0')}–${String(
+                  endP
+                ).padStart(2, '0')}`;
+          const headerRangeBadges = secEl.querySelectorAll<HTMLElement>(
+            '[data-sync-lesson-range]'
+          );
+          headerRangeBadges.forEach((b) => {
+            b.textContent = `📄 ${rangeLabel}`;
+          });
+
           exactSectionPageMap[secKey] = count;
           lessonSlicesList.push(slices);
           realLessonRanges.push({
+            secKey,
             startPage: startP,
             endPage: endP,
             pageCount: count,
-            rangeLabel:
-              startP === endP
-                ? `Tr. ${String(startP).padStart(2, '0')}`
-                : `Tr. ${String(startP).padStart(2, '0')}–${String(
-                    endP
-                  ).padStart(2, '0')}`,
+            rangeLabel,
           });
         }
 
@@ -1304,52 +1336,65 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
 
         // Pass 2: Update the TOC DOM elements with 100% exact verified page numbers and re-capture TOC
         setPdfExportProgress('Đang đồng bộ số trang vào Mục lục...');
-        const totalPageNodes = tocEl.querySelectorAll<HTMLElement>(
-          '[data-sync-total-pages]'
+        const paddedTotal = String(exactTotalPages).padStart(2, '0');
+
+        tocEl
+          .querySelectorAll<HTMLElement>('[data-sync-total-pages-inline]')
+          .forEach((n) => {
+            n.textContent = paddedTotal;
+          });
+        tocEl
+          .querySelectorAll<HTMLElement>('[data-sync-total-pages-box]')
+          .forEach((n) => {
+            const orient = n.getAttribute('data-orientation') || (isLandscape ? 'Ngang' : 'Dọc');
+            n.textContent = `${paddedTotal} trang A4 (${orient})`;
+          });
+        tocEl
+          .querySelectorAll<HTMLElement>('[data-sync-total-pages-footer]')
+          .forEach((n) => {
+            n.textContent = `${exactTotalPages} trang`;
+          });
+        const tocHeaderBadge = tocEl.querySelector<HTMLElement>(
+          '[data-sync-toc-header-badge]'
         );
-        totalPageNodes.forEach((n) => {
-          n.textContent = String(exactTotalPages).padStart(2, '0');
-        });
-        const tocHeaderRangeNode = tocEl.querySelector<HTMLElement>(
-          '[data-sync-toc-header-range]'
-        );
-        if (tocHeaderRangeNode) {
-          tocHeaderRangeNode.textContent =
+        if (tocHeaderBadge) {
+          tocHeaderBadge.textContent =
             tocActualPages > 1
               ? `📄 TRANG BÌA & MỤC LỤC: Tr. 01–${String(
                   tocActualPages
-                ).padStart(2, '0')} / Tổng ${String(exactTotalPages).padStart(
-                  2,
-                  '0'
-                )} tr.`
-              : `📄 TRANG BÌA & MỤC LỤC: Tr. 01 / Tổng ${String(
-                  exactTotalPages
-                ).padStart(2, '0')} tr.`;
+                ).padStart(2, '0')} / Tổng ${paddedTotal} tr.`
+              : `📄 TRANG BÌA & MỤC LỤC: Tr. 01 / Tổng ${paddedTotal} tr.`;
         }
 
-        realLessonRanges.forEach((rng, idx) => {
+        realLessonRanges.forEach((rng) => {
           const rangeNodes = tocEl.querySelectorAll<HTMLElement>(
-            `[data-sync-lesson-range="${idx}"]`
+            `[data-sync-toc-range="${rng.secKey}"]`
           );
           rangeNodes.forEach((n) => {
             n.textContent = rng.rangeLabel;
           });
           const countNodes = tocEl.querySelectorAll<HTMLElement>(
-            `[data-sync-lesson-count="${idx}"]`
+            `[data-sync-toc-count="${rng.secKey}"]`
           );
           countNodes.forEach((n) => {
             n.textContent = `(${rng.pageCount} trang A4)`;
           });
           const pillarNodes = tocEl.querySelectorAll<HTMLElement>(
-            `[data-sync-pillar-lesson="${idx}"]`
+            `[data-sync-toc-pillar="${rng.secKey}"]`
           );
           const pTotal = Math.max(1, pillarNodes.length);
           pillarNodes.forEach((pNode, pIdx) => {
+            const rawRatio = parseFloat(
+              pNode.getAttribute('data-pillar-ratio') || ''
+            );
+            const ratio = Number.isFinite(rawRatio)
+              ? rawRatio
+              : pIdx / pTotal;
             const estPage =
               rng.startPage +
               Math.min(
                 rng.pageCount - 1,
-                Math.floor((pIdx / pTotal) * rng.pageCount)
+                Math.floor(ratio * rng.pageCount)
               );
             pNode.textContent = `Tr. ${String(estPage).padStart(2, '0')}`;
           });
@@ -1444,6 +1489,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
       console.error('Direct PDF export error, falling back to print:', err);
       handlePrintA4();
     } finally {
+      rootEl.style.zoom = prevZoom;
       setIsExportingPdf(false);
       setPdfExportProgress('');
     }
@@ -4727,6 +4773,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
             {/* COVER PAGE & COMPREHENSIVE TABLE OF CONTENTS WITH PAGE NUMBERS */}
             {/* ============================================================= */}
             {includeCoverAndToc && (
+              <LessonPrintErrorBoundary lessonTitle="Trang Bìa & Mục Lục Đề Cương">
               <div
                 data-section-key="__toc__"
                 data-section-label="Trang Bìa & Mục Lục Đề Cương"
@@ -4946,16 +4993,16 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                                           {p.lvl2Count > 0
                                             ? `${p.lvl2Count} ý · `
                                             : ''}
-                                          {p.points.toFixed(2)}đ
+                                          {(p.points ?? 0).toFixed(2)}đ
                                         </span>
                                         <span
                                           data-sync-toc-pillar={meta.sectionKey}
-                                          data-pillar-ratio={p.offsetRatio.toFixed(
-                                            4
-                                          )}
+                                          data-pillar-ratio={(
+                                            p.offsetRatio ?? 0
+                                          ).toFixed(4)}
                                           className="font-bold text-[8.2pt] text-[#1e3a8a] bg-[#eff6ff] px-1.5 py-0.2 rounded-xs border border-[#bfdbfe] min-w-[46px] text-center"
                                         >
-                                          Tr. {String(p.pageNumber).padStart(2, '0')}
+                                          Tr. {String(p.pageNumber ?? 1).padStart(2, '0')}
                                         </span>
                                       </div>
                                     </div>
@@ -4992,7 +5039,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                                 {meta.rubricItemsCount} tiêu chí ({meta.keywordsCount} từ khóa)
                               </div>
                               <div className="mt-0.5 font-bold text-[#15803d]">
-                                Barem: {meta.totalPoints.toFixed(1)}đ
+                                Barem: {(meta.totalPoints ?? 5).toFixed(1)}đ
                               </div>
                             </td>
 
@@ -5087,6 +5134,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                   {tocPaginationData.lessonsMeta[0]?.pageRangeLabel || 'Tr. 02'}) —————
                 </div>
               </div>
+              </LessonPrintErrorBoundary>
             )}
 
             {/* ============================================================= */}
