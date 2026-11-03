@@ -725,6 +725,7 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
 export const FishboneDiagramView: React.FC<
   SharedDiagramViewProps & {
     transform: { x: number; y: number; scale: number };
+    isPanning?: boolean;
     onAutoFitMeasured?: (naturalWidth: number, naturalHeight: number) => void;
     renderCompactBulletChildren: (
       items: MindmapNode[],
@@ -732,13 +733,14 @@ export const FishboneDiagramView: React.FC<
       accentColor: string
     ) => React.ReactNode;
   }
-> = ({
+> = React.memo(({
   rootNode,
   selectedNodeId,
   showBadges,
   themeMode = 'dark',
   activeRecallLevel,
   transform,
+  isPanning = false,
   onAutoFitMeasured,
   onRevealNode,
   onSelectNode,
@@ -1037,6 +1039,8 @@ export const FishboneDiagramView: React.FC<
       style={{
         transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
         transformOrigin: '0 0',
+        willChange: 'transform',
+        transition: isPanning ? 'none' : 'transform 180ms ease-out',
       }}
       className="relative inline-flex flex-col pointer-events-auto select-none pt-6 pb-10 pl-16 pr-[360px]"
     >
@@ -1124,7 +1128,7 @@ export const FishboneDiagramView: React.FC<
       </div>
     </div>
   );
-};
+});
 
 /* ========================================================================== */
 /* 3. ⚖️ CHẾ ĐỘ "BẢNG SO SÁNH & PHÂN BIỆT" (CLINICAL MATRIX TABLE VIEW)        */

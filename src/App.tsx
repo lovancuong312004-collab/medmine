@@ -179,13 +179,17 @@ export default function App() {
     }
   }, [themeMode]);
 
-  // Save database to LocalStorage automatically
+  // Save database to LocalStorage automatically (Debounced 350ms to prevent main-thread lag with 20+ lessons)
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_DB, JSON.stringify(database));
-    } catch {
-      // ignore storage quota errors
-    }
+    const timer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY_DB, JSON.stringify(database));
+      } catch {
+        // ignore storage quota errors
+      }
+    }, 350);
+
+    return () => window.clearTimeout(timer);
   }, [database]);
 
   const toastTimerRef = useRef<number | null>(null);
@@ -393,10 +397,10 @@ export default function App() {
   /**
    * Logout / Lock Screen Handler
    */
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY_AUTH_REMEMBER);
     setAuthRole('unauthenticated');
-  };
+  }, []);
 
   const activeLesson: LessonMindmap = useMemo(() => {
     if (!Array.isArray(database.lessons) || database.lessons.length === 0) {
@@ -433,85 +437,106 @@ export default function App() {
   }, [activeLesson, selectedNodeId]);
 
   // Mutate the rootNode of the currently active lesson
-  const updateActiveRootNode = (
-    updater: (root: MindmapNode) => MindmapNode,
-    shouldSyncToCloud = true
-  ) => {
-    if (!activeLesson?.id) return;
-    setDatabase((prev) => {
-      const nextDb: MedMindDatabase = {
-        ...prev,
-        lessons: prev.lessons.map((lesson) =>
-          lesson.id === activeLesson?.id
-            ? {
-                ...lesson,
-                updatedAt: new Date().toISOString(),
-                rootNode: updater(lesson.rootNode),
-              }
-            : lesson
-        ),
+  const updateActiveRootNode = useCallback(
+    (
+      updater: (root: MindmapNode) => MindmapNode,
+      shouldSyncToCloud = true
+    ) => {
+      if (!activeLesson?.id) return;
+      setDatabase((prev) => {
+        const nextDb: MedMindDatabase = {
+          ...prev,
+          lessons: prev.lessons.map((lesson) =>
+            lesson.id === activeLesson?.id
+              ? {
+                  ...lesson,
+                  updatedAt: new Date().toISOString(),
+                  rootNode: updater(lesson.rootNode),
+                }
+              : lesson
+          ),
+        };
+        if (shouldSyncToCloud && !isReadOnly) {
+          triggerBackgroundCloudPush(nextDb);
+        }
+        return nextDb;
+      });
+    },
+    [activeLesson?.id, isReadOnly, triggerBackgroundCloudPush]
+  );
+
+  const handleToggleCollapseNode = useCallback(
+    (nodeId: string) => {
+      updateActiveRootNode((root) => toggleNodeCollapseById(root, nodeId), false);
+    },
+    [updateActiveRootNode]
+  );
+
+  const handleApplyLevelFilter = useCallback(
+    (maxVisibleLevel: number) => {
+      updateActiveRootNode(
+        (root) => setTreeExpansionByLevel(root, maxVisibleLevel),
+        false
+      );
+      const levelLabel =
+        maxVisibleLevel === 99
+          ? 'Mở toàn bộ các cấp'
+          : `Hiển thị đến Cấp ${maxVisibleLevel}`;
+      showToast(levelLabel);
+    },
+    [updateActiveRootNode, showToast]
+  );
+
+  const handleUpdateNode = useCallback(
+    (nodeId: string, updater: (n: MindmapNode) => MindmapNode) => {
+      updateActiveRootNode((root) => updateNodeById(root, nodeId, updater), !isReadOnly);
+    },
+    [updateActiveRootNode, isReadOnly]
+  );
+
+  const handleSetNodeMastery = useCallback(
+    (nodeId: string, mastery: NodeMasteryStatus) => {
+      handleUpdateNode(nodeId, (n) => ({ ...n, mastery }));
+    },
+    [handleUpdateNode]
+  );
+
+  const handleQuickAddChild = useCallback(
+    (parentId: string) => {
+      if (isReadOnly) return;
+      const newChild: MindmapNode = {
+        id: `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        label: 'Nhánh kiến thức mới',
+        mastery: 'untested',
+        children: [],
       };
-      if (shouldSyncToCloud && !isReadOnly) {
-        triggerBackgroundCloudPush(nextDb);
-      }
-      return nextDb;
-    });
-  };
+      updateActiveRootNode((root) => addChildNodeById(root, parentId, newChild), true);
+      setSelectedNodeId(newChild.id);
+      showToast('Đã thêm nhánh con mới. Hãy chỉnh sửa nội dung ở bảng bên phải.');
+    },
+    [isReadOnly, updateActiveRootNode, showToast]
+  );
 
-  const handleToggleCollapseNode = (nodeId: string) => {
-    updateActiveRootNode((root) => toggleNodeCollapseById(root, nodeId), false);
-  };
+  const handleAddChildFromDrawer = useCallback(
+    (parentId: string, child: MindmapNode) => {
+      if (isReadOnly) return;
+      updateActiveRootNode((root) => addChildNodeById(root, parentId, child), true);
+      setSelectedNodeId(child.id);
+      showToast(`Đã thêm nhánh "${child.label}"`);
+    },
+    [isReadOnly, updateActiveRootNode, showToast]
+  );
 
-  const handleApplyLevelFilter = (maxVisibleLevel: number) => {
-    updateActiveRootNode(
-      (root) => setTreeExpansionByLevel(root, maxVisibleLevel),
-      false
-    );
-    const levelLabel =
-      maxVisibleLevel === 99
-        ? 'Mở toàn bộ các cấp'
-        : `Hiển thị đến Cấp ${maxVisibleLevel}`;
-    showToast(levelLabel);
-  };
-
-  const handleUpdateNode = (
-    nodeId: string,
-    updater: (n: MindmapNode) => MindmapNode
-  ) => {
-    updateActiveRootNode((root) => updateNodeById(root, nodeId, updater), !isReadOnly);
-  };
-
-  const handleSetNodeMastery = (nodeId: string, mastery: NodeMasteryStatus) => {
-    handleUpdateNode(nodeId, (n) => ({ ...n, mastery }));
-  };
-
-  const handleQuickAddChild = (parentId: string) => {
-    if (isReadOnly) return;
-    const newChild: MindmapNode = {
-      id: `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      label: 'Nhánh kiến thức mới',
-      mastery: 'untested',
-      children: [],
-    };
-    updateActiveRootNode((root) => addChildNodeById(root, parentId, newChild), true);
-    setSelectedNodeId(newChild.id);
-    showToast('Đã thêm nhánh con mới. Hãy chỉnh sửa nội dung ở bảng bên phải.');
-  };
-
-  const handleAddChildFromDrawer = (parentId: string, child: MindmapNode) => {
-    if (isReadOnly) return;
-    updateActiveRootNode((root) => addChildNodeById(root, parentId, child), true);
-    setSelectedNodeId(child.id);
-    showToast(`Đã thêm nhánh "${child.label}"`);
-  };
-
-  const handleDeleteNode = (nodeId: string) => {
-    if (isReadOnly) return;
-    if (nodeId === activeLesson?.rootNode?.id) return;
-    updateActiveRootNode((root) => deleteNodeById(root, nodeId), true);
-    setSelectedNodeId(activeLesson?.rootNode?.id || null);
-    showToast('Đã xóa nhánh khỏi sơ đồ tư duy.');
-  };
+  const handleDeleteNode = useCallback(
+    (nodeId: string) => {
+      if (isReadOnly) return;
+      if (nodeId === activeLesson?.rootNode?.id) return;
+      updateActiveRootNode((root) => deleteNodeById(root, nodeId), true);
+      setSelectedNodeId(activeLesson?.rootNode?.id || null);
+      showToast('Đã xóa nhánh khỏi sơ đồ tư duy.');
+    },
+    [isReadOnly, activeLesson?.rootNode?.id, updateActiveRootNode, showToast]
+  );
 
   // Curriculum management handlers
   const handleCreateSystem = (name: string) => {

@@ -70,7 +70,7 @@ const SYSTEM_ICON_MAP: Record<string, React.ReactNode> = {
   Baby: <Baby className="w-4 h-4 text-[#81c995]" />,
 };
 
-export const SidebarCurriculum: React.FC<SidebarCurriculumProps> = ({
+const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
   database,
   activeLessonId,
   isReadOnly,
@@ -1156,3 +1156,60 @@ export const SidebarCurriculum: React.FC<SidebarCurriculumProps> = ({
     </>
   );
 };
+
+export const SidebarCurriculum = React.memo(
+  SidebarCurriculumComponent,
+  (prev, next) => {
+    if (
+      prev.activeLessonId !== next.activeLessonId ||
+      prev.isReadOnly !== next.isReadOnly ||
+      prev.themeMode !== next.themeMode ||
+      prev.isCollapsed !== next.isCollapsed ||
+      prev.isMobileOpen !== next.isMobileOpen ||
+      prev.cloudConnected !== next.cloudConnected
+    ) {
+      return false;
+    }
+
+    if (prev.database === next.database) {
+      return true;
+    }
+
+    if (
+      prev.database.systems !== next.database.systems ||
+      prev.database.subjects !== next.database.subjects ||
+      prev.database.lessons.length !== next.database.lessons.length
+    ) {
+      return false;
+    }
+
+    // Check if any lesson's sidebar-relevant fields changed (ignore pure branch collapse toggles)
+    for (let i = 0; i < prev.database.lessons.length; i++) {
+      const pL = prev.database.lessons[i];
+      const nL = next.database.lessons[i];
+      if (
+        pL.id !== nL.id ||
+        pL.title !== nL.title ||
+        pL.status !== nL.status ||
+        pL.systemId !== nL.systemId ||
+        pL.subjectId !== nL.subjectId
+      ) {
+        return false;
+      }
+      if (pL.rootNode !== nL.rootNode) {
+        const pStats = calculateMasteryStats(pL.rootNode);
+        const nStats = calculateMasteryStats(nL.rootNode);
+        if (
+          pStats.total !== nStats.total ||
+          pStats.mastered !== nStats.mastered ||
+          pStats.review !== nStats.review
+        ) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+);
+

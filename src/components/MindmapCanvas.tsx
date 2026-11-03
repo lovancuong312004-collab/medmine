@@ -60,7 +60,350 @@ interface MindmapCanvasProps {
   onOpenPrintStudio?: () => void;
 }
 
-export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
+interface MindmapNodeCardProps {
+  node: MindmapNode;
+  depth: number;
+  pillarIndex?: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  directChildrenCount: number;
+  isSelected: boolean;
+  hasClinicalNotes: boolean;
+  blurred: boolean;
+  showBadges: boolean;
+  isLight: boolean;
+  isReadOnly: boolean;
+  activeRecallLevel: ActiveRecallLevel;
+  onSelectNode: (nodeId: string) => void;
+  onRevealNode: (nodeId: string) => void;
+  onHoverNode: (nodeId: string | null) => void;
+  onSetNodeMastery: (nodeId: string, mastery: NodeMasteryStatus) => void;
+  onQuickAddChild: (parentId: string) => void;
+  onToggleCollapse: (nodeId: string) => void;
+}
+
+const MindmapNodeCard: React.FC<MindmapNodeCardProps> = React.memo(
+  ({
+    node,
+    depth,
+    pillarIndex,
+    x,
+    y,
+    width,
+    height,
+    directChildrenCount,
+    isSelected,
+    hasClinicalNotes,
+    blurred,
+    showBadges,
+    isLight,
+    isReadOnly,
+    activeRecallLevel,
+    onSelectNode,
+    onRevealNode,
+    onHoverNode,
+    onSetNodeMastery,
+    onQuickAddChild,
+    onToggleCollapse,
+  }) => {
+    const hasChildren = directChildrenCount > 0;
+    const badgeMeta = node.badge ? SEMANTIC_BADGE_CONFIG[node.badge] : null;
+    const showPillarNum =
+      depth === 1 &&
+      pillarIndex !== undefined &&
+      !hasLeadingNumberPrefix(node.label);
+
+    const lightPillarPalette =
+      pillarIndex !== undefined
+        ? LIGHT_BRANCH_PALETTES[
+            (pillarIndex - 1) % LIGHT_BRANCH_PALETTES.length
+          ]
+        : LIGHT_BRANCH_PALETTES[0];
+
+    const effectiveAccentColor = isLight
+      ? lightPillarPalette.accent
+      : node.accentColor || '#8ab4f8';
+
+    let containerClasses = '';
+    let labelClasses = '';
+    let inlineBorderStyle: React.CSSProperties = {};
+
+    if (depth === 0) {
+      containerClasses = isLight
+        ? 'rounded-[12px] shadow-md'
+        : 'bg-[#3f3c5c] hover:bg-[#49456b] rounded-[12px] shadow-xl';
+      labelClasses = `font-display font-bold text-[15.5px] leading-snug ${
+        isLight ? 'text-blue-950' : 'text-white'
+      }`;
+      inlineBorderStyle = {
+        backgroundColor: isLight ? '#eff6ff' : undefined,
+        border: isSelected
+          ? `2.5px solid ${isLight ? '#1d4ed8' : '#ffffff'}`
+          : `2px solid ${isLight ? '#3b82f6' : '#8ab4f8'}`,
+      };
+    } else if (depth === 1) {
+      containerClasses = isLight
+        ? 'rounded-[10px] shadow-sm'
+        : 'bg-[#2d2e30] hover:bg-[#35373a] rounded-[10px] shadow-md';
+      labelClasses = `font-display font-semibold text-[14px] leading-snug ${
+        isLight ? 'text-slate-900' : 'text-white'
+      }`;
+      inlineBorderStyle = {
+        backgroundColor: isLight ? lightPillarPalette.bg : undefined,
+        borderTop: isSelected
+          ? `2px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
+          : `1px solid ${isLight ? lightPillarPalette.border : '#4b5056'}`,
+        borderRight: isSelected
+          ? `2px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
+          : `1px solid ${isLight ? lightPillarPalette.border : '#4b5056'}`,
+        borderBottom: isSelected
+          ? `2px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
+          : `1px solid ${isLight ? lightPillarPalette.border : '#4b5056'}`,
+        borderLeft: `4px solid ${effectiveAccentColor}`,
+      };
+    } else if (depth === 2) {
+      containerClasses = isLight
+        ? 'rounded-[10px] shadow-xs'
+        : 'bg-[#242528] hover:bg-[#2d2f33] rounded-[10px] shadow-sm';
+      labelClasses = `font-display font-semibold text-[13px] leading-snug ${
+        isLight ? 'text-slate-900' : 'text-[#f1f3f4]'
+      }`;
+      inlineBorderStyle = {
+        backgroundColor: isLight ? '#ffffff' : undefined,
+        borderTop: isSelected
+          ? `1.5px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
+          : `1px solid ${isLight ? '#cbd5e1' : '#3c4043'}`,
+        borderRight: isSelected
+          ? `1.5px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
+          : `1px solid ${isLight ? '#cbd5e1' : '#3c4043'}`,
+        borderBottom: isSelected
+          ? `1.5px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
+          : `1px solid ${isLight ? '#cbd5e1' : '#3c4043'}`,
+        borderLeft: badgeMeta
+          ? `3.5px solid ${badgeMeta.color}`
+          : isSelected
+          ? `2px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
+          : `3px solid ${effectiveAccentColor}`,
+      };
+    } else {
+      containerClasses = isLight
+        ? 'rounded-[9px] shadow-xs'
+        : 'bg-[#1b1c1f] hover:bg-[#242529] rounded-[9px] shadow-sm';
+      labelClasses = `font-medium text-[12.5px] leading-snug ${
+        isLight ? 'text-slate-800' : 'text-[#e8eaed]'
+      }`;
+      inlineBorderStyle = {
+        backgroundColor: isLight ? '#ffffff' : undefined,
+        borderTop: isSelected
+          ? `1.5px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
+          : `1px solid ${isLight ? '#cbd5e1' : '#3c4043'}`,
+        borderRight: isSelected
+          ? `1.5px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
+          : `1px solid ${isLight ? '#cbd5e1' : '#3c4043'}`,
+        borderBottom: isSelected
+          ? `1.5px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
+          : `1px solid ${isLight ? '#cbd5e1' : '#3c4043'}`,
+        borderLeft: badgeMeta
+          ? `3.5px solid ${badgeMeta.color}`
+          : isSelected
+          ? `2px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
+          : `1.5px solid ${isLight ? '#94a3b8' : '#3c4043'}`,
+      };
+    }
+
+    return (
+      <div
+        data-mindmap-node="true"
+        style={{
+          left: x,
+          top: y,
+          width,
+          minHeight: height,
+          ...inlineBorderStyle,
+        }}
+        onMouseEnter={() => onHoverNode(node.id)}
+        onMouseLeave={() => onHoverNode(null)}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (activeRecallLevel !== 'off') {
+            onRevealNode(node.id);
+          }
+          onSelectNode(node.id);
+        }}
+        className={`group absolute px-3 py-2 flex flex-col justify-center transition-colors cursor-pointer select-none ${containerClasses}`}
+      >
+        {/* Optional Semantic Badge Chip */}
+        {showBadges && badgeMeta && depth >= 2 && (
+          <div className="mb-1">
+            <span
+              style={{
+                color: badgeMeta.color,
+                backgroundColor: badgeMeta.bgColor,
+              }}
+              className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold tracking-tight whitespace-nowrap"
+            >
+              {badgeMeta.dot} {badgeMeta.shortLabel}
+            </span>
+          </div>
+        )}
+
+        {/* Pure Knowledge Content Row */}
+        <div className="flex items-start justify-between gap-1.5">
+          <div
+            className={`min-w-0 flex-1 transition-all duration-150 ${
+              blurred
+                ? 'blur-[5px] opacity-55 select-none'
+                : 'blur-0 opacity-100'
+            }`}
+          >
+            <div className={labelClasses}>
+              {showPillarNum && (
+                <span
+                  style={{ color: effectiveAccentColor }}
+                  className="font-mono font-bold mr-1"
+                >
+                  {pillarIndex}.
+                </span>
+              )}
+              <span>{node.label}</span>
+            </div>
+
+            {node.summary && depth <= 2 && (
+              <p
+                className={`text-[11.5px] mt-1 pt-1 border-t line-clamp-2 leading-snug ${
+                  depth === 0
+                    ? isLight
+                      ? 'text-slate-700 border-blue-200'
+                      : 'text-slate-300 border-[#3c4043]/40'
+                    : isLight
+                    ? 'text-slate-600 border-slate-200'
+                    : 'text-[#b8bdc2] border-[#3c4043]/40'
+                }`}
+              >
+                {node.summary}
+              </p>
+            )}
+          </div>
+
+          {/* Subtle Inline Indicators */}
+          {(hasClinicalNotes ||
+            node.mastery === 'mastered' ||
+            node.mastery === 'review') && (
+            <div className="flex items-center gap-1 shrink-0 pt-0.5">
+              {hasClinicalNotes && (
+                <span
+                  title="Có ghi chú lâm sàng (Click để mở bảng phải)"
+                  className="text-[#8ab4f8] opacity-85"
+                >
+                  <BookOpen className="w-3 h-3" />
+                </span>
+              )}
+              {node.mastery === 'mastered' && (
+                <span
+                  title="Đã thuộc nhánh này"
+                  className="text-[11px] font-bold text-[#10b981]"
+                >
+                  ✓
+                </span>
+              )}
+              {node.mastery === 'review' && (
+                <span
+                  title="Cần ôn lại nhánh này"
+                  className="text-[11px] font-bold text-[#f59e0b]"
+                >
+                  !
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ACTIVE RECALL QUICK MASTERY ACTIONS */}
+        {activeRecallLevel !== 'off' && depth >= 1 && (
+          <div className="opacity-0 group-hover:opacity-100 absolute -top-2.5 right-4 flex items-center gap-1 bg-[#131314] border border-[#3c4043] rounded-md px-1.5 py-0.5 shadow-lg transition-opacity z-10">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onSetNodeMastery(node.id, 'mastered');
+              }}
+              title="Đánh dấu: Đã nhớ"
+              className={`p-0.5 rounded hover:bg-[#10b981]/20 ${
+                node.mastery === 'mastered'
+                  ? 'text-[#10b981]'
+                  : 'text-[#9aa0a6]'
+              }`}
+            >
+              <Check className="w-3 h-3" />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onSetNodeMastery(node.id, 'review');
+              }}
+              title="Đánh dấu: Cần ôn lại"
+              className={`p-0.5 rounded hover:bg-[#f59e0b]/20 ${
+                node.mastery === 'review'
+                  ? 'text-[#f59e0b]'
+                  : 'text-[#9aa0a6]'
+              }`}
+            >
+              <RotateCcw className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+
+        {/* QUICK ADD CHILD BUTTON (Owner only) */}
+        {!isReadOnly && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onQuickAddChild(node.id);
+            }}
+            title="Thêm nhánh con trực tiếp"
+            className="opacity-0 group-hover:opacity-100 absolute -bottom-2 right-2.5 w-4.5 h-4.5 rounded-full bg-[#2d2e30] hover:bg-[#8ab4f8] text-[#9aa0a6] hover:text-[#131314] border border-[#3c4043] flex items-center justify-center transition-all shadow z-10"
+          >
+            <Plus className="w-2.5 h-2.5" />
+          </button>
+        )}
+
+        {/* COLLAPSE / EXPAND BUTTON + DIRECT CHILDREN COUNT (+N) */}
+        {hasChildren && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleCollapse(node.id);
+            }}
+            title={
+              node.collapsed
+                ? `Mở rộng ${directChildrenCount} nhánh con trực tiếp`
+                : `Thu gọn ${directChildrenCount} nhánh con trực tiếp`
+            }
+            className={`absolute -right-3 top-1/2 -translate-y-1/2 h-5 px-1.5 rounded-full border flex items-center justify-center gap-0.5 transition-all shadow-md cursor-pointer z-10 ${
+              node.collapsed
+                ? 'bg-[#3f3c5c] border-[#8ab4f8] text-white hover:bg-[#514d75]'
+                : 'bg-[#2d2e30] border-[#5f6368] text-[#e3e3e3] hover:bg-[#3c4043]'
+            }`}
+          >
+            {node.collapsed ? (
+              <>
+                <span className="text-[10px] font-mono font-bold text-[#8ab4f8] pl-0.5">
+                  +{directChildrenCount}
+                </span>
+                <ChevronRight className="w-3 h-3" />
+              </>
+            ) : (
+              <ChevronLeft className="w-3 h-3" />
+            )}
+          </button>
+        )}
+      </div>
+    );
+  }
+);
+
+const MindmapCanvasComponent: React.FC<MindmapCanvasProps> = ({
   rootNode,
   selectedNodeId,
   isReadOnly = false,
@@ -82,8 +425,14 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
   const [viewMode, setViewMode] = useState<MindmapViewMode>('horizontal');
   const [transform, setTransform] = useState({ x: 64, y: 36, scale: 0.96 });
   const [isDragging, setIsDragging] = useState(false);
+  const [isWheelPanning, setIsWheelPanning] = useState(false);
+  const [isTouchPanning, setIsTouchPanning] = useState(false);
+  const wheelPanTimerRef = useRef<number | null>(null);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [activeLevelFilterBtn, setActiveLevelFilterBtn] = useState<number>(99);
+
+  // Unified panning/zooming flag to disable CSS transition for zero-latency tracking
+  const isPanning = isDragging || isWheelPanning || isTouchPanning;
 
   // Semantic Medical Badges toggle (Default: OFF for clean minimalist UI)
   const [showBadges, setShowBadges] = useState<boolean>(false);
@@ -94,6 +443,7 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
 
   const isLight = themeMode === 'light';
 
+  // Memoize layout calculation depending strictly on [rootNode, viewMode, showBadges]
   const layout = useMemo(() => {
     if (viewMode === 'vertical') {
       return computeVerticalFlowchartLayout(rootNode, showBadges);
@@ -274,6 +624,15 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
       e.preventDefault();
       e.stopPropagation();
 
+      setIsWheelPanning(true);
+      if (wheelPanTimerRef.current) {
+        window.clearTimeout(wheelPanTimerRef.current);
+      }
+      wheelPanTimerRef.current = window.setTimeout(() => {
+        setIsWheelPanning(false);
+        wheelPanTimerRef.current = null;
+      }, 120);
+
       const rect = el.getBoundingClientRect();
       const cursorX = e.clientX - rect.left;
       const cursorY = e.clientY - rect.top;
@@ -305,6 +664,9 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
     el.addEventListener('wheel', handleNativeWheel, { passive: false });
     return () => {
       el.removeEventListener('wheel', handleNativeWheel);
+      if (wheelPanTimerRef.current) {
+        window.clearTimeout(wheelPanTimerRef.current);
+      }
     };
   }, [isScrollablePageMode]);
 
@@ -356,6 +718,7 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
     if (isScrollablePageMode) return;
     if ((e.target as HTMLElement).closest('[data-floating-ui="true"]')) return;
 
+    setIsTouchPanning(true);
     if (e.touches.length === 1) {
       const t = e.touches[0];
       touchStateRef.current = {
@@ -423,6 +786,7 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
 
   const handleTouchEnd = () => {
     touchStateRef.current.mode = 'none';
+    setIsTouchPanning(false);
   };
 
   const handleZoomIn = () => {
@@ -444,10 +808,17 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
     onApplyLevelFilter(level);
   };
 
-  const handleNodeToggleCollapse = (nodeId: string) => {
-    setActiveLevelFilterBtn(0);
-    onToggleCollapse(nodeId);
-  };
+  const handleNodeToggleCollapse = useCallback(
+    (nodeId: string) => {
+      setActiveLevelFilterBtn(0);
+      onToggleCollapse(nodeId);
+    },
+    [onToggleCollapse]
+  );
+
+  const handleRevealNode = useCallback((nodeId: string) => {
+    setRevealedNodeIds((prev) => (prev[nodeId] ? prev : { ...prev, [nodeId]: true }));
+  }, []);
 
   // Export interactive SVG diagram snapshot
   const handleExportSvgSnapshot = () => {
@@ -1321,10 +1692,9 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                 revealedNodeIds={revealedNodeIds}
                 hoveredNodeId={hoveredNodeId}
                 transform={transform}
+                isPanning={isPanning}
                 onSetHoveredNodeId={setHoveredNodeId}
-                onRevealNode={(id) =>
-                  setRevealedNodeIds((prev) => ({ ...prev, [id]: true }))
-                }
+                onRevealNode={handleRevealNode}
                 onSelectNode={onSelectNode}
                 onToggleCollapse={handleNodeToggleCollapse}
                 onQuickAddChild={onQuickAddChild}
@@ -1345,6 +1715,8 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                 style={{
                   transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
                   transformOrigin: '0 0',
+                  willChange: 'transform',
+                  transition: isPanning ? 'none' : 'transform 180ms ease-out',
                 }}
                 className="relative inline-flex flex-col items-center pointer-events-auto select-none pb-28 pr-28"
               >
@@ -2279,6 +2651,8 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                 style={{
                   transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
                   transformOrigin: '0 0',
+                  willChange: 'transform',
+                  transition: isPanning ? 'none' : 'transform 180ms ease-out',
                   width: layout.totalWidth,
                   height: layout.totalHeight,
                 }}
@@ -2346,323 +2720,33 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
                   })}
                 </svg>
 
-                {/* CLEAN MINIMALIST NODE CARDS LAYER */}
-                {layout.nodes.map((item) => {
-                  const {
-                    node,
-                    depth,
-                    pillarIndex,
-                    x,
-                    y,
-                    width,
-                    height,
-                    directChildrenCount,
-                  } = item;
-                  const isSelected = selectedNodeId === node.id;
-                  const hasChildren = directChildrenCount > 0;
-                  const hasClinicalNotes = hasNodeClinicalNotes(node);
-                  const blurred = isNodeDepthBlurred(node.id, depth);
-                  const badgeMeta = node.badge
-                    ? SEMANTIC_BADGE_CONFIG[node.badge]
-                    : null;
-                  const showPillarNum =
-                    depth === 1 &&
-                    pillarIndex !== undefined &&
-                    !hasLeadingNumberPrefix(node.label);
-
-                  const lightPillarPalette =
-                    pillarIndex !== undefined
-                      ? LIGHT_BRANCH_PALETTES[
-                          (pillarIndex - 1) % LIGHT_BRANCH_PALETTES.length
-                        ]
-                      : LIGHT_BRANCH_PALETTES[0];
-
-                  const effectiveAccentColor = isLight
-                    ? lightPillarPalette.accent
-                    : node.accentColor || '#8ab4f8';
-
-                  let containerClasses = '';
-                  let labelClasses = '';
-                  let inlineBorderStyle: React.CSSProperties = {};
-
-                  if (depth === 0) {
-                    containerClasses = isLight
-                      ? 'rounded-[12px] shadow-md'
-                      : 'bg-[#3f3c5c] hover:bg-[#49456b] rounded-[12px] shadow-xl';
-                    labelClasses = `font-display font-bold text-[15.5px] leading-snug ${
-                      isLight ? 'text-blue-950' : 'text-white'
-                    }`;
-                    inlineBorderStyle = {
-                      backgroundColor: isLight ? '#eff6ff' : undefined,
-                      border: isSelected
-                        ? `2.5px solid ${isLight ? '#1d4ed8' : '#ffffff'}`
-                        : `2px solid ${isLight ? '#3b82f6' : '#8ab4f8'}`,
-                    };
-                  } else if (depth === 1) {
-                    containerClasses = isLight
-                      ? 'rounded-[10px] shadow-sm'
-                      : 'bg-[#2d2e30] hover:bg-[#35373a] rounded-[10px] shadow-md';
-                    labelClasses = `font-display font-semibold text-[14px] leading-snug ${
-                      isLight ? 'text-slate-900' : 'text-white'
-                    }`;
-                    inlineBorderStyle = {
-                      backgroundColor: isLight ? lightPillarPalette.bg : undefined,
-                      borderTop: isSelected
-                        ? `2px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
-                        : `1px solid ${isLight ? lightPillarPalette.border : '#4b5056'}`,
-                      borderRight: isSelected
-                        ? `2px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
-                        : `1px solid ${isLight ? lightPillarPalette.border : '#4b5056'}`,
-                      borderBottom: isSelected
-                        ? `2px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
-                        : `1px solid ${isLight ? lightPillarPalette.border : '#4b5056'}`,
-                      borderLeft: `4px solid ${effectiveAccentColor}`,
-                    };
-                  } else if (depth === 2) {
-                    containerClasses = isLight
-                      ? 'rounded-[10px] shadow-xs'
-                      : 'bg-[#242528] hover:bg-[#2d2f33] rounded-[10px] shadow-sm';
-                    labelClasses = `font-display font-semibold text-[13px] leading-snug ${
-                      isLight ? 'text-slate-900' : 'text-[#f1f3f4]'
-                    }`;
-                    inlineBorderStyle = {
-                      backgroundColor: isLight ? '#ffffff' : undefined,
-                      borderTop: isSelected
-                        ? `1.5px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
-                        : `1px solid ${isLight ? '#cbd5e1' : '#3c4043'}`,
-                      borderRight: isSelected
-                        ? `1.5px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
-                        : `1px solid ${isLight ? '#cbd5e1' : '#3c4043'}`,
-                      borderBottom: isSelected
-                        ? `1.5px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
-                        : `1px solid ${isLight ? '#cbd5e1' : '#3c4043'}`,
-                      borderLeft: badgeMeta
-                        ? `3.5px solid ${badgeMeta.color}`
-                        : isSelected
-                        ? `2px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
-                        : `3px solid ${effectiveAccentColor}`,
-                    };
-                  } else {
-                    containerClasses = isLight
-                      ? 'rounded-[9px] shadow-xs'
-                      : 'bg-[#1b1c1f] hover:bg-[#242529] rounded-[9px] shadow-sm';
-                    labelClasses = `font-medium text-[12.5px] leading-snug ${
-                      isLight ? 'text-slate-800' : 'text-[#e8eaed]'
-                    }`;
-                    inlineBorderStyle = {
-                      backgroundColor: isLight ? '#ffffff' : undefined,
-                      borderTop: isSelected
-                        ? `1.5px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
-                        : `1px solid ${isLight ? '#cbd5e1' : '#3c4043'}`,
-                      borderRight: isSelected
-                        ? `1.5px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
-                        : `1px solid ${isLight ? '#cbd5e1' : '#3c4043'}`,
-                      borderBottom: isSelected
-                        ? `1.5px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
-                        : `1px solid ${isLight ? '#cbd5e1' : '#3c4043'}`,
-                      borderLeft: badgeMeta
-                        ? `3.5px solid ${badgeMeta.color}`
-                        : isSelected
-                        ? `2px solid ${isLight ? '#2563eb' : '#8ab4f8'}`
-                        : `1.5px solid ${isLight ? '#94a3b8' : '#3c4043'}`,
-                    };
-                  }
-
-                  return (
-                    <div
-                      key={node.id}
-                      data-mindmap-node="true"
-                      style={{
-                        left: x,
-                        top: y,
-                        width,
-                        minHeight: height,
-                        ...inlineBorderStyle,
-                      }}
-                      onMouseEnter={() => setHoveredNodeId(node.id)}
-                      onMouseLeave={() => setHoveredNodeId(null)}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (
-                          activeRecallLevel !== 'off' &&
-                          !revealedNodeIds[node.id]
-                        ) {
-                          setRevealedNodeIds((prev) => ({
-                            ...prev,
-                            [node.id]: true,
-                          }));
-                        }
-                        onSelectNode(node.id);
-                      }}
-                      className={`group absolute px-3 py-2 flex flex-col justify-center transition-colors cursor-pointer select-none ${containerClasses}`}
-                    >
-                      {/* Optional Semantic Badge Chip */}
-                      {showBadges && badgeMeta && depth >= 2 && (
-                        <div className="mb-1">
-                          <span
-                            style={{
-                              color: badgeMeta.color,
-                              backgroundColor: badgeMeta.bgColor,
-                            }}
-                            className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold tracking-tight whitespace-nowrap"
-                          >
-                            {badgeMeta.dot} {badgeMeta.shortLabel}
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Pure Knowledge Content Row */}
-                      <div className="flex items-start justify-between gap-1.5">
-                        <div
-                          className={`min-w-0 flex-1 transition-all duration-150 ${
-                            blurred
-                              ? 'blur-[5px] opacity-55 select-none'
-                              : 'blur-0 opacity-100'
-                          }`}
-                        >
-                          <div className={labelClasses}>
-                            {showPillarNum && (
-                              <span
-                                style={{ color: effectiveAccentColor }}
-                                className="font-mono font-bold mr-1"
-                              >
-                                {pillarIndex}.
-                              </span>
-                            )}
-                            <span>{node.label}</span>
-                          </div>
-
-                          {node.summary && depth <= 2 && (
-                            <p
-                              className={`text-[11.5px] mt-1 pt-1 border-t line-clamp-2 leading-snug ${
-                                depth === 0
-                                  ? isLight
-                                    ? 'text-slate-700 border-blue-200'
-                                    : 'text-slate-300 border-[#3c4043]/40'
-                                  : isLight
-                                  ? 'text-slate-600 border-slate-200'
-                                  : 'text-[#b8bdc2] border-[#3c4043]/40'
-                              }`}
-                            >
-                              {node.summary}
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Subtle Inline Indicators */}
-                        {(hasClinicalNotes ||
-                          node.mastery === 'mastered' ||
-                          node.mastery === 'review') && (
-                          <div className="flex items-center gap-1 shrink-0 pt-0.5">
-                            {hasClinicalNotes && (
-                              <span
-                                title="Có ghi chú lâm sàng (Click để mở bảng phải)"
-                                className="text-[#8ab4f8] opacity-85"
-                              >
-                                <BookOpen className="w-3 h-3" />
-                              </span>
-                            )}
-                            {node.mastery === 'mastered' && (
-                              <span
-                                title="Đã thuộc nhánh này"
-                                className="text-[11px] font-bold text-[#10b981]"
-                              >
-                                ✓
-                              </span>
-                            )}
-                            {node.mastery === 'review' && (
-                              <span
-                                title="Cần ôn lại nhánh này"
-                                className="text-[11px] font-bold text-[#f59e0b]"
-                              >
-                                !
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* ACTIVE RECALL QUICK MASTERY ACTIONS */}
-                      {activeRecallLevel !== 'off' && depth >= 1 && (
-                        <div className="opacity-0 group-hover:opacity-100 absolute -top-2.5 right-4 flex items-center gap-1 bg-[#131314] border border-[#3c4043] rounded-md px-1.5 py-0.5 shadow-lg transition-opacity z-10">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onSetNodeMastery(node.id, 'mastered');
-                            }}
-                            title="Đánh dấu: Đã nhớ"
-                            className={`p-0.5 rounded hover:bg-[#10b981]/20 ${
-                              node.mastery === 'mastered'
-                                ? 'text-[#10b981]'
-                                : 'text-[#9aa0a6]'
-                            }`}
-                          >
-                            <Check className="w-3 h-3" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onSetNodeMastery(node.id, 'review');
-                            }}
-                            title="Đánh dấu: Cần ôn lại"
-                            className={`p-0.5 rounded hover:bg-[#f59e0b]/20 ${
-                              node.mastery === 'review'
-                                ? 'text-[#f59e0b]'
-                                : 'text-[#9aa0a6]'
-                            }`}
-                          >
-                            <RotateCcw className="w-3 h-3" />
-                          </button>
-                        </div>
-                      )}
-
-                      {/* QUICK ADD CHILD BUTTON (Owner only) */}
-                      {!isReadOnly && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onQuickAddChild(node.id);
-                          }}
-                          title="Thêm nhánh con trực tiếp"
-                          className="opacity-0 group-hover:opacity-100 absolute -bottom-2 right-2.5 w-4.5 h-4.5 rounded-full bg-[#2d2e30] hover:bg-[#8ab4f8] text-[#9aa0a6] hover:text-[#131314] border border-[#3c4043] flex items-center justify-center transition-all shadow z-10"
-                        >
-                          <Plus className="w-2.5 h-2.5" />
-                        </button>
-                      )}
-
-                      {/* COLLAPSE / EXPAND BUTTON + DIRECT CHILDREN COUNT (+N) */}
-                      {hasChildren && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleNodeToggleCollapse(node.id);
-                          }}
-                          title={
-                            node.collapsed
-                              ? `Mở rộng ${directChildrenCount} nhánh con trực tiếp`
-                              : `Thu gọn ${directChildrenCount} nhánh con trực tiếp`
-                          }
-                          className={`absolute -right-3 top-1/2 -translate-y-1/2 h-5 px-1.5 rounded-full border flex items-center justify-center gap-0.5 transition-all shadow-md cursor-pointer z-10 ${
-                            node.collapsed
-                              ? 'bg-[#3f3c5c] border-[#8ab4f8] text-white hover:bg-[#514d75]'
-                              : 'bg-[#2d2e30] border-[#5f6368] text-[#e3e3e3] hover:bg-[#3c4043]'
-                          }`}
-                        >
-                          {node.collapsed ? (
-                            <>
-                              <span className="text-[10px] font-mono font-bold text-[#8ab4f8] pl-0.5">
-                                +{directChildrenCount}
-                              </span>
-                              <ChevronRight className="w-3 h-3" />
-                            </>
-                          ) : (
-                            <ChevronLeft className="w-3 h-3" />
-                          )}
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
+                {/* CLEAN MINIMALIST MEMOIZED NODE CARDS LAYER */}
+                {layout.nodes.map((item) => (
+                  <MindmapNodeCard
+                    key={item.node.id}
+                    node={item.node}
+                    depth={item.depth}
+                    pillarIndex={item.pillarIndex}
+                    x={item.x}
+                    y={item.y}
+                    width={item.width}
+                    height={item.height}
+                    directChildrenCount={item.directChildrenCount}
+                    isSelected={selectedNodeId === item.node.id}
+                    hasClinicalNotes={hasNodeClinicalNotes(item.node)}
+                    blurred={isNodeDepthBlurred(item.node.id, item.depth)}
+                    showBadges={showBadges}
+                    isLight={isLight}
+                    isReadOnly={isReadOnly}
+                    activeRecallLevel={activeRecallLevel}
+                    onSelectNode={onSelectNode}
+                    onRevealNode={handleRevealNode}
+                    onHoverNode={setHoveredNodeId}
+                    onSetNodeMastery={onSetNodeMastery}
+                    onQuickAddChild={onQuickAddChild}
+                    onToggleCollapse={handleNodeToggleCollapse}
+                  />
+                ))}
               </div>
             )}
           </>
@@ -2743,3 +2827,6 @@ export const MindmapCanvas: React.FC<MindmapCanvasProps> = ({
     </div>
   );
 };
+
+export const MindmapCanvas = React.memo(MindmapCanvasComponent);
+

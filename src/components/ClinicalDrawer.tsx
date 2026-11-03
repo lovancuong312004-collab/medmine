@@ -169,7 +169,7 @@ const ClinicalMarkdownView: React.FC<{ content: string }> = ({ content }) => {
   return <div>{elements}</div>;
 };
 
-export const ClinicalDrawer: React.FC<ClinicalDrawerProps> = ({
+const ClinicalDrawerComponent: React.FC<ClinicalDrawerProps> = ({
   node,
   depth,
   breadcrumb,
@@ -760,3 +760,6 @@ export const ClinicalDrawer: React.FC<ClinicalDrawerProps> = ({
     </>
   );
 };
+
+export const ClinicalDrawer = React.memo(ClinicalDrawerComponent);
+
