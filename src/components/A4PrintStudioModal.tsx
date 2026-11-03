@@ -15,7 +15,13 @@ import {
   ChevronDown,
   Search,
   AlertCircle,
+  Download,
+  Loader2,
+  CheckCircle2,
+  ListOrdered,
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas-pro';
 import {
   MedMindDatabase,
   LessonMindmap,
@@ -96,6 +102,37 @@ export type PrintTemplateType =
 type BatchScopeMode = 'current' | 'folder' | 'custom';
 type FolderTargetType = 'subject' | 'system' | 'all_library';
 
+export interface TocPillarPageMeta {
+  index: number;
+  id: string;
+  label: string;
+  lvl2Count: number;
+  lvl3Count: number;
+  rubricCount: number;
+  keywordsCount: number;
+  points: number;
+  pageNumber: number;
+}
+
+export interface TocLessonPageMeta {
+  lessonId: string;
+  lessonIndex: number;
+  title: string;
+  sysName: string;
+  subName: string;
+  statusLabel: string;
+  pillarCount: number;
+  lvl2TotalCount: number;
+  rubricItemsCount: number;
+  keywordsCount: number;
+  totalPoints: number;
+  startPage: number;
+  endPage: number;
+  pageCount: number;
+  pageRangeLabel: string;
+  pillars: TocPillarPageMeta[];
+}
+
 const PRINT_COLUMN_THEMES = [
   {
     headerBg: '#1d4ed8', // Cột 1: Xanh dương
@@ -112,7 +149,7 @@ const PRINT_COLUMN_THEMES = [
     cardBg: '#f0fdf4',
     cardBorder: '#86efac',
     colBorder: '#15803d',
-    accentText: '#166534',
+    accentText: '#166334',
     highlightBg: '#dcfce7',
   },
   {
@@ -193,12 +230,11 @@ function renderPrintableKeywordText(
 
 /**
  * Collect all compiled CSS rules from the current document so the hidden print iframe
- * and downloaded HTML file render 100% identically without depending on external CDN scripts.
+ * and print portal render 100% identically without depending on external CDN scripts.
  */
 function collectCompiledDocumentStyles(): string {
   const chunks: string[] = [];
   try {
-    // 1. Extract live CSS rules from all same-origin stylesheets so the iframe renders in 0ms
     const inlineRules: string[] = [];
     Array.from(document.styleSheets).forEach((sheet) => {
       try {
@@ -209,7 +245,6 @@ function collectCompiledDocumentStyles(): string {
           });
         }
       } catch {
-        // Cross-origin stylesheet fallback
         if (sheet.href) {
           chunks.push(`<link rel="stylesheet" href="${sheet.href}" />`);
         }
@@ -219,7 +254,6 @@ function collectCompiledDocumentStyles(): string {
       chunks.push(`<style>${inlineRules.join('\n')}</style>`);
     }
 
-    // 2. Also include any inline <style> tags as backup
     const styleNodes = document.querySelectorAll('style');
     styleNodes.forEach((node) => {
       if (node.innerHTML) {
@@ -230,6 +264,68 @@ function collectCompiledDocumentStyles(): string {
     console.warn('Could not clone document styles:', e);
   }
   return chunks.join('\n');
+}
+
+/**
+ * Find the cleanest horizontal whitespace row near `idealSliceHeight` on a high-DPI canvas
+ * so multi-page PDF slicing never cuts through the middle of a line of text or box border.
+ */
+function findCleanCanvasPageSliceHeight(
+  sourceCanvas: HTMLCanvasElement,
+  startY: number,
+  idealSliceHeight: number
+): number {
+  const remaining = sourceCanvas.height - startY;
+  if (remaining <= idealSliceHeight + 24) {
+    return remaining;
+  }
+
+  const ctx = sourceCanvas.getContext('2d');
+  if (!ctx) return idealSliceHeight;
+
+  const maxSearchUp = Math.min(260, Math.floor(idealSliceHeight * 0.28));
+  const minSliceHeight = Math.max(200, idealSliceHeight - maxSearchUp);
+  const sampleWidth = sourceCanvas.width;
+  const stepX = Math.max(4, Math.floor(sampleWidth / 90));
+
+  let bestYOffset = idealSliceHeight;
+  let bestWhiteScore = -1;
+
+  for (
+    let offset = idealSliceHeight;
+    offset >= minSliceHeight;
+    offset -= 3
+  ) {
+    const y = startY + offset;
+    if (y >= sourceCanvas.height) continue;
+    try {
+      const rowData = ctx.getImageData(0, y, sampleWidth, 1).data;
+      let whitePixels = 0;
+      let totalSampled = 0;
+      for (let x = 24; x < sampleWidth - 24; x += stepX) {
+        const idx = x * 4;
+        const r = rowData[idx];
+        const g = rowData[idx + 1];
+        const b = rowData[idx + 2];
+        totalSampled++;
+        if (r > 246 && g > 246 && b > 246) {
+          whitePixels++;
+        }
+      }
+      const ratio = totalSampled > 0 ? whitePixels / totalSampled : 0;
+      if (ratio >= 0.985) {
+        return offset;
+      }
+      if (ratio > bestWhiteScore) {
+        bestWhiteScore = ratio;
+        bestYOffset = offset;
+      }
+    } catch {
+      return idealSliceHeight;
+    }
+  }
+
+  return bestWhiteScore >= 0.9 ? bestYOffset : idealSliceHeight;
 }
 
 export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
@@ -301,10 +397,21 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
     null
   );
 
-  // Cover & Table of Contents toggle
-  const [includeCoverAndToc, setIncludeCoverAndToc] = useState<boolean>(false);
+  // Cover & Table of Contents toggle (Enabled by default so TOC + Page numbers are always ready)
+  const [includeCoverAndToc, setIncludeCoverAndToc] = useState<boolean>(true);
+  const [tocShowSubPillars, setTocShowSubPillars] = useState<boolean>(true);
   const [bookletTitle, setBookletTitle] = useState<string>(
     'TẬP ĐỀ CƯƠNG ÔN THI TỰ LUẬN & SƠ ĐỒ HỆ THỐNG HÓA Y KHOA'
+  );
+  const [compilerSubHeader, setCompilerSubHeader] = useState<string>(
+    'Bản Đóng Quyển Chuẩn Barem Chấm Thi Lâm Sàng · Có Mục Lục & Định Vị Số Trang'
+  );
+
+  // Direct PDF generation state
+  const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
+  const [pdfExportProgress, setPdfExportProgress] = useState<string>('');
+  const [pdfExportSuccessMsg, setPdfExportSuccessMsg] = useState<string | null>(
+    null
   );
 
   // ==========================================================================
@@ -332,7 +439,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
   const printSheetRef = useRef<HTMLDivElement | null>(null);
   const hiddenPrintIframeRef = useRef<HTMLIFrameElement | null>(null);
 
-  // Clean up persistent hidden print iframe when modal unmounts
+  // Clean up persistent hidden print iframe and print portal when modal unmounts
   useEffect(() => {
     return () => {
       if (
@@ -344,6 +451,10 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
         } catch {
           // ignore
         }
+      }
+      const existingPortal = document.getElementById('medmind-print-portal');
+      if (existingPortal && existingPortal.parentNode) {
+        existingPortal.parentNode.removeChild(existingPortal);
       }
     };
   }, []);
@@ -449,6 +560,206 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
     template === 'horizontal_tree' ||
     template === 'fishbone_flowchart';
 
+  // ==========================================================================
+  // 3. TABLE OF CONTENTS & PAGE NUMBERING ENGINE (`tocPaginationData`)
+  // ==========================================================================
+  const tocPaginationData = useMemo(() => {
+    // Estimate how many A4 pages the Cover & TOC itself occupies
+    const totalRawPillars = lessonsToPrint.reduce((acc, l) => {
+      const pLen = Array.isArray(l?.rootNode?.children)
+        ? l.rootNode.children.length
+        : 0;
+      return acc + pLen;
+    }, 0);
+    const effectiveTocRowUnits =
+      lessonsToPrint.length * 2 + (tocShowSubPillars ? totalRawPillars : 0);
+    const tocPageCount = includeCoverAndToc
+      ? Math.max(1, Math.ceil(effectiveTocRowUnits / 28))
+      : 0;
+
+    let runningCurrentPage = includeCoverAndToc ? tocPageCount + 1 : 1;
+    let totalPillars = 0;
+    let totalRubricItems = 0;
+    let totalKeywords = 0;
+
+    const lessonsMeta: TocLessonPageMeta[] = lessonsToPrint.map(
+      (rawLesson, idx) => {
+        const lesson = normalizeLessonForPrint(rawLesson, idx);
+        const lRoot = lesson.rootNode;
+        const allPillars = Array.isArray(lRoot?.children) ? lRoot.children : [];
+        const filteredPillars =
+          batchMode === 'current' && singleLessonPillarScope !== 'all'
+            ? allPillars.filter((p) => p?.id === singleLessonPillarScope)
+            : allPillars;
+        const targetPillars =
+          filteredPillars.length > 0 ? filteredPillars : allPillars;
+
+        const scopeArg =
+          batchMode === 'current' ? singleLessonPillarScope : 'all';
+        const rubricCriteria = buildMedicalRubricCriteria(
+          lRoot,
+          scopeArg,
+          totalPointsScale
+        );
+        const { sysName, subName } = getLessonPathNames(lesson);
+
+        const lessonStartPage = runningCurrentPage;
+        // 1 A4 page = 100 density units; header takes ~14 units
+        let accumulatedUnits = 14;
+        let lvl2TotalCount = 0;
+
+        const pillarsMeta: TocPillarPageMeta[] = targetPillars.map(
+          (pillar, pIdx) => {
+            const pillarPageNumber =
+              lessonStartPage + Math.floor(accumulatedUnits / 100);
+            const lvl2Nodes = Array.isArray(pillar.children)
+              ? pillar.children
+              : [];
+            lvl2TotalCount += lvl2Nodes.length;
+
+            let lvl3Count = 0;
+            lvl2Nodes.forEach((l2) => {
+              const l3 = Array.isArray(l2.children) ? l2.children : [];
+              lvl3Count += l3.length;
+              l3.forEach((l3Item) => {
+                if (Array.isArray(l3Item.children)) {
+                  lvl3Count += l3Item.children.length;
+                }
+              });
+            });
+
+            const pillarRubrics = rubricCriteria.filter(
+              (c) => c.pillarIndex === pIdx + 1
+            );
+            const pillarKeywords = pillarRubrics.reduce(
+              (sum, c) => sum + c.requiredKeywords.length,
+              0
+            );
+            const pillarPoints = pillarRubrics.reduce(
+              (sum, c) => sum + c.allocatedPoints,
+              0
+            );
+
+            // Estimate vertical height units for this pillar depending on template
+            let pillarUnits = 12;
+            if (template === 'barem_outline' || template === 'cornell_note') {
+              pillarUnits =
+                8 +
+                Math.max(1, lvl2Nodes.length) * 7 +
+                lvl3Count * 2.4;
+            } else if (template === 'horizontal_tree') {
+              pillarUnits =
+                7 +
+                Math.max(1, lvl2Nodes.length) * 6.5 +
+                lvl3Count * 2.1;
+            } else if (
+              template === 'infographic_landscape' ||
+              template === 'fishbone_flowchart'
+            ) {
+              pillarUnits =
+                6 +
+                Math.max(1, lvl2Nodes.length) * 4.5 +
+                lvl3Count * 1.4;
+            } else if (template === 'blank_worksheet') {
+              pillarUnits =
+                10 +
+                Math.max(1, lvl2Nodes.length) * (worksheetLinesPerItem * 3.5);
+            }
+
+            accumulatedUnits += pillarUnits;
+
+            return {
+              index: pIdx + 1,
+              id: pillar.id || `p-${pIdx}`,
+              label: cleanNodeLabel(pillar.label || `Mục ${pIdx + 1}`),
+              lvl2Count: lvl2Nodes.length,
+              lvl3Count,
+              rubricCount: pillarRubrics.length,
+              keywordsCount: pillarKeywords,
+              points: pillarPoints,
+              pageNumber: pillarPageNumber,
+            };
+          }
+        );
+
+        const lessonPageCount = Math.max(
+          1,
+          Math.ceil(accumulatedUnits / 100)
+        );
+        const lessonEndPage = lessonStartPage + lessonPageCount - 1;
+        runningCurrentPage = lessonEndPage + 1;
+
+        const lessonKeywordsCount = rubricCriteria.reduce(
+          (sum, c) => sum + c.requiredKeywords.length,
+          0
+        );
+
+        totalPillars += targetPillars.length;
+        totalRubricItems += rubricCriteria.length;
+        totalKeywords += lessonKeywordsCount;
+
+        const statusLabel =
+          lesson.status === 'mastered'
+            ? 'Đã thuộc'
+            : lesson.status === 'reviewing'
+            ? 'Đang ôn'
+            : 'Trọng tâm';
+
+        const pageRangeLabel =
+          lessonStartPage === lessonEndPage
+            ? `Tr. ${String(lessonStartPage).padStart(2, '0')}`
+            : `Tr. ${String(lessonStartPage).padStart(2, '0')}–${String(
+                lessonEndPage
+              ).padStart(2, '0')}`;
+
+        return {
+          lessonId: lesson.id || `lesson-${idx}`,
+          lessonIndex: idx,
+          title: cleanNodeLabel(
+            lRoot.label || lesson.title || `Bài học ${idx + 1}`
+          ),
+          sysName,
+          subName,
+          statusLabel,
+          pillarCount: targetPillars.length,
+          lvl2TotalCount,
+          rubricItemsCount: rubricCriteria.length,
+          keywordsCount: lessonKeywordsCount,
+          totalPoints: totalPointsScale,
+          startPage: lessonStartPage,
+          endPage: lessonEndPage,
+          pageCount: lessonPageCount,
+          pageRangeLabel,
+          pillars: pillarsMeta,
+        };
+      }
+    );
+
+    const totalDocumentPages = Math.max(1, runningCurrentPage - 1);
+
+    return {
+      tocPageCount,
+      totalDocumentPages,
+      totalLessons: lessonsToPrint.length,
+      totalPillars,
+      totalRubricItems,
+      totalKeywords,
+      lessonsMeta,
+    };
+  }, [
+    lessonsToPrint,
+    includeCoverAndToc,
+    tocShowSubPillars,
+    batchMode,
+    singleLessonPillarScope,
+    totalPointsScale,
+    template,
+    worksheetLinesPerItem,
+    database,
+    systemName,
+    subjectName,
+  ]);
+
   const toggleLessonSelection = (id: string) => {
     setSelectedLessonIds((prev) => {
       if (prev.includes(id)) {
@@ -468,8 +779,186 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
   };
 
   /**
-   * Print cleanly via a persistent hidden iframe with cloned compiled styles + inline A4 CSS
-   * Works reliably inside AI Studio iframe and standard browsers without blank screens
+   * 1-CLICK DIRECT PDF FILE EXPORT (`.pdf` download using html2canvas-pro + jsPDF)
+   * Works 100% reliably inside sandboxed iframes, mobile browsers, and desktop without print dialog issues.
+   */
+  const handleExportDirectPdf = async () => {
+    if (!printSheetRef.current || isExportingPdf) return;
+    setIsExportingPdf(true);
+    setPdfExportSuccessMsg(null);
+    setPdfExportProgress('Đang chuẩn bị bố cục trang A4...');
+
+    try {
+      const rootEl = printSheetRef.current;
+      const sectionNodes = Array.from(
+        rootEl.querySelectorAll<HTMLElement>('.a4-print-section')
+      );
+      const targets =
+        sectionNodes.length > 0 ? sectionNodes : [rootEl];
+
+      const orientation = isLandscape ? 'landscape' : 'portrait';
+      const pdf = new jsPDF({
+        orientation,
+        unit: 'mm',
+        format: 'a4',
+        compress: true,
+      });
+
+      const pageWidthMm = isLandscape ? 297 : 210;
+      const pageHeightMm = isLandscape ? 210 : 297;
+      const marginMm = 8;
+      const footerReserveMm = 6;
+      const contentWidthMm = pageWidthMm - marginMm * 2;
+      const contentMaxHeightMm =
+        pageHeightMm - marginMm * 2 - footerReserveMm;
+
+      interface RenderedPageSlice {
+        imgDataUrl: string;
+        widthMm: number;
+        heightMm: number;
+        sectionLabel: string;
+      }
+
+      const allSlices: RenderedPageSlice[] = [];
+
+      for (let sIdx = 0; sIdx < targets.length; sIdx++) {
+        const sectionEl = targets[sIdx];
+        const sectionLabel =
+          sectionEl.getAttribute('data-section-label') ||
+          `Phần ${sIdx + 1}/${targets.length}`;
+        setPdfExportProgress(
+          `Đang kết xuất trang in (${sIdx + 1}/${targets.length})...`
+        );
+
+        // Give React / UI thread a frame to update progress text
+        await new Promise((r) => setTimeout(r, 40));
+
+        const canvas = await html2canvas(sectionEl, {
+          scale: 2,
+          useCORS: true,
+          backgroundColor: '#ffffff',
+          logging: false,
+          ignoreElements: (el) =>
+            el.classList.contains('screen-page-divider') ||
+            el.classList.contains('no-print'),
+        });
+
+        // Calculate ideal pixel height corresponding to 1 A4 printable content area
+        const pxPerMm = canvas.width / contentWidthMm;
+        const idealPageHeightPx = Math.floor(contentMaxHeightMm * pxPerMm);
+
+        let currentY = 0;
+        while (currentY < canvas.height) {
+          const sliceHeightPx = findCleanCanvasPageSliceHeight(
+            canvas,
+            currentY,
+            idealPageHeightPx
+          );
+          if (sliceHeightPx <= 0) break;
+
+          const pageCanvas = document.createElement('canvas');
+          pageCanvas.width = canvas.width;
+          pageCanvas.height = sliceHeightPx;
+          const pageCtx = pageCanvas.getContext('2d');
+          if (pageCtx) {
+            pageCtx.fillStyle = '#ffffff';
+            pageCtx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+            pageCtx.drawImage(
+              canvas,
+              0,
+              currentY,
+              canvas.width,
+              sliceHeightPx,
+              0,
+              0,
+              canvas.width,
+              sliceHeightPx
+            );
+          }
+
+          const sliceHeightMm = sliceHeightPx / pxPerMm;
+          allSlices.push({
+            imgDataUrl: pageCanvas.toDataURL('image/jpeg', 0.94),
+            widthMm: contentWidthMm,
+            heightMm: Math.min(contentMaxHeightMm, sliceHeightMm),
+            sectionLabel,
+          });
+
+          currentY += sliceHeightPx;
+        }
+      }
+
+      // Write all slices to the PDF document and stamp page numbers
+      const totalPdfPages = Math.max(1, allSlices.length);
+      allSlices.forEach((slice, pageIdx) => {
+        if (pageIdx > 0) {
+          pdf.addPage('a4', orientation);
+        }
+        pdf.addImage(
+          slice.imgDataUrl,
+          'JPEG',
+          marginMm,
+          marginMm,
+          slice.widthMm,
+          slice.heightMm,
+          undefined,
+          'FAST'
+        );
+
+        // Draw crisp bottom divider line & page number footer
+        const footerY = pageHeightMm - 4.5;
+        pdf.setDrawColor(200, 210, 225);
+        pdf.setLineWidth(0.25);
+        pdf.line(
+          marginMm,
+          footerY - 3.2,
+          pageWidthMm - marginMm,
+          footerY - 3.2
+        );
+
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(30, 58, 138);
+        pdf.text(
+          `MedMind Print Studio Pro  |  Page ${String(pageIdx + 1).padStart(
+            2,
+            '0'
+          )} / ${String(totalPdfPages).padStart(2, '0')}`,
+          pageWidthMm - marginMm,
+          footerY,
+          { align: 'right' }
+        );
+      });
+
+      const rawBaseName =
+        lessonsToPrint.length > 1
+          ? `De-Cuong-Y-Khoa-${lessonsToPrint.length}-Bai-Hoc`
+          : cleanNodeLabel(lessonTitle || 'De-Cuong-Y-Khoa')
+              .replace(/[/:*?"<>|\\]+/g, '-')
+              .slice(0, 65);
+      const fileName = `${rawBaseName || 'De-Cuong-Y-Khoa'}.pdf`;
+
+      setPdfExportProgress('Đang lưu file PDF...');
+      pdf.save(fileName);
+
+      setPdfExportSuccessMsg(
+        `Đã xuất thành công file "${fileName}" (${totalPdfPages} trang A4)!`
+      );
+      setTimeout(() => {
+        setPdfExportSuccessMsg(null);
+      }, 6000);
+    } catch (err) {
+      console.error('Direct PDF export error, falling back to print:', err);
+      handlePrintA4();
+    } finally {
+      setIsExportingPdf(false);
+      setPdfExportProgress('');
+    }
+  };
+
+  /**
+   * Print cleanly via BOTH a top-level `#medmind-print-portal` in `document.body` AND a real-dimension
+   * offscreen iframe so Vector Print-to-PDF works 100% reliably with zero dark UI leakage.
    */
   const handlePrintA4 = () => {
     if (!printSheetRef.current) return;
@@ -479,16 +968,32 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
       lessonsToPrint.length > 1
         ? `Đề Cương Gộp (${lessonsToPrint.length} Bài Học)`
         : lessonTitle || 'Đề Cương Y Khoa';
+    const pageSizeRule = isLandscape ? 'A4 landscape' : 'A4 portrait';
 
+    // 1. Mount top-level #medmind-print-portal directly in document.body so if window.print() runs,
+    // @media print hides #root and prints ONLY #medmind-print-portal cleanly!
+    try {
+      let portal = document.getElementById('medmind-print-portal');
+      if (!portal) {
+        portal = document.createElement('div');
+        portal.id = 'medmind-print-portal';
+        document.body.appendChild(portal);
+      }
+      portal.innerHTML = contentHtml;
+    } catch (e) {
+      console.warn('Could not populate print portal:', e);
+    }
+
+    // 2. Also populate a real-dimension offscreen iframe (1024x800, not 0x0) for isolated printing
     try {
       let iframe = hiddenPrintIframeRef.current;
       if (!iframe || !document.body.contains(iframe)) {
         iframe = document.createElement('iframe');
         iframe.style.position = 'fixed';
-        iframe.style.right = '0';
-        iframe.style.bottom = '0';
-        iframe.style.width = '0';
-        iframe.style.height = '0';
+        iframe.style.left = '-9999px';
+        iframe.style.top = '0';
+        iframe.style.width = isLandscape ? '1122px' : '794px';
+        iframe.style.height = '1122px';
         iframe.style.border = '0';
         iframe.style.opacity = '0';
         iframe.style.pointerEvents = 'none';
@@ -512,7 +1017,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
   ${compiledStyles}
   <style>
     @page {
-      size: A4;
+      size: ${pageSizeRule};
       margin: 10mm;
     }
     html, body {
@@ -579,7 +1084,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
           console.warn('Iframe print fallback to window.print():', printErr);
           window.print();
         }
-      }, 150);
+      }, 320);
     } catch (err) {
       console.warn('Print error fallback to window.print():', err);
       window.print();
@@ -588,7 +1093,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
 
   /**
    * Render a single lesson according to the active `template` with High-Density Medical Handout layout
-   * so each 6-7 branch lesson fits compactly into 1 to 1.5 A4 pages (~22 pages for 20 lessons).
+   * and synchronized page numbering (`Trang X / Tổng Y`) matching the Table of Contents.
    */
   const renderSingleLessonTemplate = (
     rawLesson: LessonMindmap,
@@ -625,16 +1130,40 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
               .map((p, i) => `(${i + 1}) ${cleanNodeLabel(p.label)}`)
               .join(' · ')}.`;
 
+      const lessonPageMeta = tocPaginationData.lessonsMeta[lessonIndex];
+      const lessonPageBadge = lessonPageMeta
+        ? `${lessonPageMeta.pageRangeLabel} / Tổng ${String(
+            tocPaginationData.totalDocumentPages
+          ).padStart(2, '0')} tr.`
+        : `Trang ${String(lessonIndex + 1).padStart(2, '0')}`;
+
       return (
         <LessonPrintErrorBoundary
           key={lesson.id || `lesson-${lessonIndex}`}
           lessonTitle={lesson.title}
         >
           <div
-            className={`bg-white text-[#111827] ${
+            data-section-label={`Bài ${lessonIndex + 1}: ${resolvedLessonTitle}`}
+            className={`a4-print-section bg-white text-[#111827] ${
               lessonIndex < totalLessons - 1 ? 'a4-page-break pb-2' : ''
             }`}
           >
+            {/* Running Top Page Header Bar with Page Number */}
+            <div className="flex items-center justify-between gap-2 pb-1 mb-1.5 border-b border-neutral-300 text-[8pt] font-mono text-neutral-600">
+              <div className="truncate">
+                📖 {bookletTitle} · <strong>{sysName} › {subName}</strong>
+              </div>
+              <div className="shrink-0 flex items-center gap-2">
+                <span>
+                  Bài {String(lessonIndex + 1).padStart(2, '0')}/
+                  {String(totalLessons).padStart(2, '0')}
+                </span>
+                <span className="px-1.5 py-0.2 rounded-xs bg-[#eff6ff] border border-[#93c5fd] text-[#1e3a8a] font-bold">
+                  📄 {lessonPageBadge}
+                </span>
+              </div>
+            </div>
+
             {/* ================================================================= */}
             {/* TEMPLATE 1: 📋 1. BAREM TỰ LUẬN (HIGH-DENSITY PORTRAIT A4)        */}
             {/* ================================================================= */}
@@ -1876,11 +2405,29 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
               </div>
             )}
 
+            {/* Running Bottom Page Footer with Page Number & Barem Summary */}
+            <div className="mt-2.5 pt-1.5 border-t border-neutral-400 flex items-center justify-between gap-2 text-[8pt] font-mono text-neutral-700 avoid-break">
+              <div>
+                MedMind Print Studio Pro · Chuẩn Barem Tự Luận Y Khoa
+              </div>
+              <div>
+                Tổng kết bài {lessonIndex + 1}: {targetPillars.length} mục lớn ·{' '}
+                {rubricCriteria.length} ý chấm Barem · Thang{' '}
+                {totalPointsScale.toFixed(1)}đ
+              </div>
+              <div className="font-bold text-[#1e3a8a]">
+                {lessonPageBadge}
+              </div>
+            </div>
+
             {/* Screen-only visual page divider when batch-printing multiple lessons */}
             {lessonIndex < totalLessons - 1 && (
               <div className="screen-page-divider my-5 py-1.5 border-y-2 border-dashed border-[#3b82f6] bg-[#eff6ff] text-center text-[11px] font-mono font-bold text-[#1d4ed8]">
                 ✂️ ————— NGẮT TRANG A4 TỰ ĐỘNG · SANG BÀI HỌC TIẾP THEO (BÀI{' '}
-                {lessonIndex + 2}/{totalLessons}) —————
+                {lessonIndex + 2}/{totalLessons} ·{' '}
+                {tocPaginationData.lessonsMeta[lessonIndex + 1]
+                  ?.pageRangeLabel || ''}{' '}
+                ) —————
               </div>
             )}
           </div>
@@ -1903,6 +2450,19 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
     }
   };
 
+  const templateDisplayName =
+    template === 'barem_outline'
+      ? 'Bảng Barem Đề Cương Tự Luận'
+      : template === 'infographic_landscape'
+      ? 'Sơ Đồ Infographic Cột'
+      : template === 'horizontal_tree'
+      ? 'Sơ Đồ Tư Duy Cây Ngang'
+      : template === 'cornell_note'
+      ? 'Vở Gạch Ý Phương Pháp Cornell'
+      : template === 'fishbone_flowchart'
+      ? 'Sơ Đồ Xương Cá & Lưu Đồ'
+      : 'Đề Thi Tự Luận Khuyết Chữ';
+
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 md:p-4">
       <div className="w-full max-w-[1440px] h-[95vh] bg-[#131314] border border-[#2d2e30] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
@@ -1915,29 +2475,58 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
               🖨️
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="font-display font-bold text-[15.5px] text-white">
                   Print Studio Pro — Xuất PDF / Đóng Quyển Đề Cương A4
                 </h2>
-                <span className="text-[11px] font-mono text-[#81c995] hidden sm:inline">
-                  · Đang chọn in {lessonsToPrint.length} bài học
+                <span className="text-[11px] font-mono text-[#81c995] bg-[#10b981]/15 border border-[#10b981]/40 px-2 py-0.5 rounded-md">
+                  {lessonsToPrint.length} bài · Ước tính{' '}
+                  {tocPaginationData.totalDocumentPages} trang A4
                 </span>
               </div>
               <p className="text-[11.5px] text-[#9aa0a6]">
-                6 mẫu bản in A4 nền trắng chữ đen · Hỗ trợ in lẻ 1 bài hoặc in gộp cả Học phần kèm Trang bìa & Mục lục
+                6 mẫu bản in A4 nền trắng chữ đen · Mục lục tự động đánh số trang chi tiết từng bài & từng mục lớn
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Primary 1-Click Direct .PDF File Download Button */}
+            <button
+              onClick={handleExportDirectPdf}
+              disabled={isExportingPdf}
+              title="Tạo và tải trực tiếp file .PDF chuẩn A4 về máy tính / điện thoại (Không cần qua hộp thoại trình duyệt)"
+              className={`px-4 py-2 rounded-xl font-display font-bold text-[13px] flex items-center gap-1.5 shadow-lg transition-all cursor-pointer ${
+                isExportingPdf
+                  ? 'bg-[#3b82f6]/60 text-white cursor-wait'
+                  : 'bg-[#10b981] hover:bg-[#059669] text-[#052e16] shadow-[#10b981]/20'
+              }`}
+            >
+              {isExportingPdf ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>{pdfExportProgress || 'Đang tạo file PDF...'}</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  <span>
+                    📥 Tải File PDF ({lessonsToPrint.length} bài ·{' '}
+                    {tocPaginationData.totalDocumentPages} tr)
+                  </span>
+                </>
+              )}
+            </button>
+
+            {/* Browser Vector Print / Save as PDF Dialog Button */}
             <button
               onClick={handlePrintA4}
-              className="px-4 py-2 rounded-xl bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#131314] font-display font-bold text-[13px] flex items-center gap-1.5 shadow-lg transition-colors cursor-pointer"
+              disabled={isExportingPdf}
+              title="Mở hộp thoại In / Lưu PDF Vector sắc nét của trình duyệt"
+              className="px-3.5 py-2 rounded-xl bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#131314] font-display font-bold text-[13px] flex items-center gap-1.5 shadow-lg transition-colors cursor-pointer"
             >
               <Printer className="w-4 h-4" />
-              <span>
-                🖨️ In Ngay / Lưu PDF ({lessonsToPrint.length} bài)
-              </span>
+              <span>🖨️ In / Lưu PDF Vector</span>
             </button>
 
             <button
@@ -2228,8 +2817,8 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
             )}
           </div>
 
-          {/* Right: Cover Page & Table of Contents Toggle */}
-          <div className="flex items-center gap-2">
+          {/* Right: Cover Page & Table of Contents + Detailed Sub-Pillars Toggle */}
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setIncludeCoverAndToc((prev) => !prev)}
               className={`px-3 py-1.5 rounded-xl border text-[12px] font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
@@ -2243,8 +2832,27 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
               ) : (
                 <Square className="w-3.5 h-3.5" />
               )}
-              <span>📖 Tạo Trang Bìa & Mục Lục Đề Cương</span>
+              <span>📖 Trang Bìa & Mục Lục (Kèm Số Trang)</span>
             </button>
+
+            {includeCoverAndToc && (
+              <button
+                onClick={() => setTocShowSubPillars((prev) => !prev)}
+                className={`px-2.5 py-1.5 rounded-xl border text-[11.5px] font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
+                  tocShowSubPillars
+                    ? 'bg-[#3b82f6]/20 border-[#60a5fa] text-[#93c5fd] font-semibold'
+                    : 'bg-[#242528] border-[#3c4043] text-[#9aa0a6] hover:text-white'
+                }`}
+                title="Hiển thị các mục lớn (1, 2, 3...) và số trang chi tiết dưới mỗi bài học trong Mục lục"
+              >
+                <ListOrdered className="w-3.5 h-3.5" />
+                <span>
+                  {tocShowSubPillars
+                    ? 'Chi tiết mục lớn (1, 2, 3...)'
+                    : 'Chỉ hiện tên bài'}
+                </span>
+              </button>
+            )}
           </div>
 
           {/* =============================================================== */}
@@ -2354,6 +2962,22 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
           onClick={() => isMultiSelectOpen && setIsMultiSelectOpen(false)}
           className="flex-1 overflow-y-auto bg-[#202124] p-4 md:p-8 block"
         >
+          {/* Direct PDF Export Confirmation Banner */}
+          {pdfExportSuccessMsg && (
+            <div className="mx-auto mb-3 max-w-[860px] px-4 py-2.5 rounded-xl bg-[#064e3b] border border-[#10b981] text-[#ecfdf5] text-[12.5px] flex items-center justify-between gap-2 shadow-lg">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#34d399] shrink-0" />
+                <span className="font-semibold">{pdfExportSuccessMsg}</span>
+              </div>
+              <button
+                onClick={() => setPdfExportSuccessMsg(null)}
+                className="text-xs text-[#a7f3d0] hover:text-white cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
+          )}
+
           {/* Friendly Notice Banner if folder filter had 1 lesson or fallback occurred */}
           {(autoFallbackReason || batchFallbackNotice) && (
             <div className="mx-auto mb-3 max-w-[860px] px-4 py-2.5 rounded-xl bg-[#1e293b] border border-[#3b82f6]/60 text-[#e2e8f0] text-[12px] flex flex-wrap items-center justify-between gap-2">
@@ -2394,133 +3018,326 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
             className="mx-auto bg-white text-[#111827] h-auto min-h-max overflow-visible shadow-2xl p-6 md:p-10 rounded-md select-text"
           >
             {/* ============================================================= */}
-            {/* OPTIONAL COVER PAGE & TABLE OF CONTENTS (TRANG BÌA & MỤC LỤC)  */}
+            {/* COVER PAGE & COMPREHENSIVE TABLE OF CONTENTS WITH PAGE NUMBERS */}
             {/* ============================================================= */}
             {includeCoverAndToc && (
-              <div className="a4-page-break pb-4 mb-4 bg-white text-[#111827]">
+              <div
+                data-section-label="Trang Bìa & Mục Lục Đề Cương"
+                className="a4-print-section a4-page-break pb-4 mb-4 bg-white text-[#111827]"
+              >
+                {/* Running Header on Cover / TOC Page */}
+                <div className="flex items-center justify-between gap-2 pb-1 mb-1.5 border-b border-neutral-300 text-[8pt] font-mono text-neutral-600">
+                  <div>
+                    MEDMIND PRINT STUDIO PRO · HỆ THỐNG ĐÓNG QUYỂN ĐỀ CƯƠNG Y KHOA A4
+                  </div>
+                  <div className="px-1.5 py-0.2 rounded-xs bg-[#eff6ff] border border-[#93c5fd] text-[#1e3a8a] font-bold">
+                    📄 TRANG BÌA & MỤC LỤC: Tr. 01
+                    {tocPaginationData.tocPageCount > 1
+                      ? `–${String(tocPaginationData.tocPageCount).padStart(
+                          2,
+                          '0'
+                        )}`
+                      : ''}{' '}
+                    / Tổng{' '}
+                    {String(tocPaginationData.totalDocumentPages).padStart(
+                      2,
+                      '0'
+                    )}{' '}
+                    tr.
+                  </div>
+                </div>
+
                 <div className="border-2 border-[#1e3a8a] p-4 bg-white">
-                  <div className="text-center border-b-2 border-[#1e3a8a] pb-3 mb-3">
-                    <div className="text-[9pt] font-mono font-bold uppercase tracking-widest text-[#1d4ed8]">
-                      MEDMIND STUDIO · HỆ THỐNG ĐỀ CƯƠNG TỰ LUẬN & SƠ ĐỒ Y KHOA CHUẨN BAREM
+                  {/* Cover Header & Editable Title */}
+                  <div className="text-center border-b-2 border-[#1e3a8a] pb-3 mb-3 bg-[#f8fafc] p-3 rounded-xs">
+                    <div className="text-[8.5pt] font-mono font-bold uppercase tracking-widest text-[#1d4ed8]">
+                      MEDMIND STUDIO · TÀI LIỆU HỆ THỐNG HÓA LÂM SÀNG & ÔN THI TỰ LUẬN CHUẨN BAREM
                     </div>
                     <input
                       type="text"
                       value={bookletTitle}
                       onChange={(e) => setBookletTitle(e.target.value)}
-                      className="w-full text-center text-[14pt] font-extrabold uppercase text-[#1e3a8a] mt-1 bg-transparent border-b border-transparent hover:border-neutral-300 focus:border-[#1d4ed8] focus:outline-none"
+                      className="w-full text-center text-[13.5pt] font-extrabold uppercase text-[#1e3a8a] mt-1 bg-transparent border-b border-transparent hover:border-neutral-300 focus:border-[#1d4ed8] focus:outline-none"
                     />
-                    <div className="text-[9.5pt] font-medium text-neutral-700 mt-1">
-                      Tổng hợp {lessonsToPrint.length} bài học trọng tâm · Định dạng in:{' '}
-                      <strong>
-                        {template === 'barem_outline'
-                          ? 'Bảng Barem Đề Cương Tự Luận'
-                          : template === 'infographic_landscape'
-                          ? 'Sơ Đồ Infographic Cột'
-                          : template === 'horizontal_tree'
-                          ? 'Sơ Đồ Tư Duy Cây Ngang'
-                          : template === 'cornell_note'
-                          ? 'Vở Gạch Ý Phương Pháp Cornell'
-                          : template === 'fishbone_flowchart'
-                          ? 'Sơ Đồ Xương Cá & Lưu Đồ'
-                          : 'Đề Thi Tự Luận Khuyết Chữ'}
-                      </strong>
+                    <input
+                      type="text"
+                      value={compilerSubHeader}
+                      onChange={(e) => setCompilerSubHeader(e.target.value)}
+                      className="w-full text-center text-[9.5pt] font-medium text-neutral-700 mt-0.5 bg-transparent border-b border-transparent hover:border-neutral-300 focus:border-[#1d4ed8] focus:outline-none"
+                    />
+
+                    {/* 5-Column Metadata Summary Bar */}
+                    <div className="grid grid-cols-5 gap-2 mt-3 pt-2.5 border-t border-[#cbd5e1] text-left">
+                      <div className="p-1.5 rounded bg-white border border-neutral-300">
+                        <div className="text-[7.5pt] font-mono uppercase text-neutral-500">
+                          Số lượng bài học
+                        </div>
+                        <div className="text-[10pt] font-extrabold text-[#1e3a8a] font-mono">
+                          {tocPaginationData.totalLessons} bài trọng tâm
+                        </div>
+                      </div>
+                      <div className="p-1.5 rounded bg-white border border-neutral-300">
+                        <div className="text-[7.5pt] font-mono uppercase text-neutral-500">
+                          Cấu trúc đề mục
+                        </div>
+                        <div className="text-[10pt] font-extrabold text-[#15803d] font-mono">
+                          {tocPaginationData.totalPillars} mục lớn (Cấp 1)
+                        </div>
+                      </div>
+                      <div className="p-1.5 rounded bg-white border border-neutral-300">
+                        <div className="text-[7.5pt] font-mono uppercase text-neutral-500">
+                          Tổng ý chấm Barem
+                        </div>
+                        <div className="text-[10pt] font-extrabold text-[#b45309] font-mono">
+                          {tocPaginationData.totalRubricItems} ý ({tocPaginationData.totalKeywords} từ khóa)
+                        </div>
+                      </div>
+                      <div className="p-1.5 rounded bg-white border border-neutral-300">
+                        <div className="text-[7.5pt] font-mono uppercase text-neutral-500">
+                          Định dạng bản in
+                        </div>
+                        <div className="text-[9pt] font-bold text-black truncate">
+                          {templateDisplayName}
+                        </div>
+                      </div>
+                      <div className="p-1.5 rounded bg-[#eff6ff] border border-[#93c5fd]">
+                        <div className="text-[7.5pt] font-mono uppercase text-[#1d4ed8] font-bold">
+                          Tổng quy mô tài liệu
+                        </div>
+                        <div className="text-[10.5pt] font-extrabold text-[#1e3a8a] font-mono">
+                          {String(tocPaginationData.totalDocumentPages).padStart(
+                            2,
+                            '0'
+                          )}{' '}
+                          trang A4 ({isLandscape ? 'Ngang' : 'Dọc'})
+                        </div>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Table of Contents */}
+                  {/* Detailed Table of Contents with Sub-Pillars, Dot Leaders, Barem & Page Numbers */}
                   <div>
-                    <h3 className="text-[10.5pt] font-extrabold uppercase text-black mb-1.5">
-                      📖 MỤC LỤC CÁC BÀI HỌC TRONG TẬP ĐỀ CƯƠNG ({lessonsToPrint.length} BÀI):
-                    </h3>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <h3 className="text-[10.5pt] font-extrabold uppercase text-[#1e3a8a]">
+                        📖 MỤC LỤC CHI TIẾT & BẢNG ĐỊNH VỊ SỐ TRANG ({tocPaginationData.totalLessons} BÀI HỌC · {tocPaginationData.totalDocumentPages} TRANG):
+                      </h3>
+                      <span className="text-[8.5pt] font-mono text-neutral-600">
+                        Ngày xuất bản: {new Date().toLocaleDateString('vi-VN')}
+                      </span>
+                    </div>
+
                     <table
                       style={{ fontSize: '9.5pt', lineHeight: 1.35 }}
                       className="w-full border border-black bg-white text-black"
                     >
                       <thead>
-                        <tr className="bg-neutral-100 border-b-2 border-black font-bold">
+                        <tr className="bg-[#eff6ff] border-b-2 border-black font-bold text-[#1e3a8a]">
                           <th
-                            style={{ padding: '4px 6px' }}
-                            className="border border-black w-[42px] text-center"
+                            style={{ padding: '5px 6px' }}
+                            className="border border-black w-[48px] text-center"
                           >
-                            STT
+                            Bài
                           </th>
                           <th
-                            style={{ padding: '4px 8px' }}
+                            style={{ padding: '5px 8px' }}
                             className="border border-black text-left"
                           >
-                            Tên Bài Học / Chủ Đề Tự Luận
+                            Tên Bài Học & Đề Mục Chi Tiết (Mục Lớn 1, 2, 3...)
                           </th>
                           <th
-                            style={{ padding: '4px 8px' }}
-                            className="border border-black text-left w-[180px]"
+                            style={{ padding: '5px 8px' }}
+                            className="border border-black text-left w-[150px]"
                           >
-                            Học Phần / Chuyên Khoa
+                            Học Phần / Khoa
                           </th>
                           <th
-                            style={{ padding: '4px 6px' }}
-                            className="border border-black text-center w-[80px]"
+                            style={{ padding: '5px 6px' }}
+                            className="border border-black text-center w-[125px]"
                           >
-                            Số Nhánh
+                            Cấu Trúc & Barem
                           </th>
                           <th
-                            style={{ padding: '4px 6px' }}
-                            className="border border-black text-center w-[105px]"
+                            style={{ padding: '5px 6px' }}
+                            className="border border-black text-center w-[108px]"
                           >
-                            Tiến Độ Ôn
+                            Tiến Độ Ôn Tập
+                          </th>
+                          <th
+                            style={{ padding: '5px 6px' }}
+                            className="border border-black text-center w-[76px] bg-[#dbeafe]"
+                          >
+                            Số Trang
                           </th>
                         </tr>
                       </thead>
                       <tbody>
-                        {lessonsToPrint.map((l, idx) => {
-                          const { sysName, subName } = getLessonPathNames(l);
-                          const pillarCount = Array.isArray(l?.rootNode?.children)
-                            ? l.rootNode.children.length
-                            : 0;
-                          return (
-                            <tr
-                              key={l?.id || `toc-${idx}`}
-                              className="border-b border-black avoid-break"
+                        {tocPaginationData.lessonsMeta.map((meta, idx) => (
+                          <tr
+                            key={meta.lessonId || `toc-${idx}`}
+                            className="border-b border-black align-top avoid-break"
+                          >
+                            {/* Column 1: STT */}
+                            <td
+                              style={{ padding: '6px 6px' }}
+                              className="border border-black text-center font-mono font-extrabold text-[9.5pt] text-[#1e3a8a] bg-neutral-50"
                             >
-                              <td
-                                style={{ padding: '4px 6px' }}
-                                className="border border-black text-center font-mono font-bold"
-                              >
-                                {String(idx + 1).padStart(2, '0')}
-                              </td>
-                              <td
-                                style={{ padding: '4px 8px' }}
-                                className="border border-black font-bold text-[#111827]"
-                              >
-                                {l?.title || `Bài học ${idx + 1}`}
-                              </td>
-                              <td
-                                style={{ padding: '4px 8px' }}
-                                className="border border-black text-neutral-700 text-[9pt]"
-                              >
-                                {sysName} › {subName}
-                              </td>
-                              <td
-                                style={{ padding: '4px 6px' }}
-                                className="border border-black text-center font-mono"
-                              >
-                                {pillarCount} nhánh
-                              </td>
-                              <td
-                                style={{ padding: '4px 6px' }}
-                                className="border border-black text-center font-mono text-[8.5pt]"
-                              >
-                                [ ] Lần 1 &nbsp; [ ] Thuộc
-                              </td>
-                            </tr>
-                          );
-                        })}
+                              BÀI {String(idx + 1).padStart(2, '0')}
+                            </td>
+
+                            {/* Column 2: Lesson Title + Optional Detailed Sub-Pillars with Dot Leaders & Page Numbers */}
+                            <td
+                              style={{ padding: '6px 8px' }}
+                              className="border border-black text-[#111827]"
+                            >
+                              <div className="flex items-baseline justify-between gap-2">
+                                <span className="font-extrabold text-[10pt] text-[#1e3a8a]">
+                                  {meta.title}
+                                </span>
+                                <span className="text-[8.5pt] font-mono font-bold text-[#1d4ed8] shrink-0">
+                                  ({meta.pageCount} trang)
+                                </span>
+                              </div>
+
+                              {tocShowSubPillars && meta.pillars.length > 0 && (
+                                <div className="mt-1.5 pt-1 border-t border-dashed border-neutral-300 space-y-0.5">
+                                  {meta.pillars.map((p) => (
+                                    <div
+                                      key={p.id}
+                                      className="flex items-baseline gap-1 text-[8.8pt] text-neutral-800"
+                                    >
+                                      <span className="font-semibold text-black shrink-0">
+                                        <span className="font-mono font-bold text-[#1d4ed8] mr-1">
+                                          {idx + 1}.{p.index}.
+                                        </span>
+                                        {p.label}
+                                      </span>
+                                      <span className="flex-1 border-b border-dotted border-neutral-400 mx-1 min-w-[20px]" />
+                                      <span className="font-mono text-[8pt] text-neutral-600 shrink-0">
+                                        {p.lvl2Count > 0
+                                          ? `${p.lvl2Count} mục · `
+                                          : ''}
+                                        {p.points.toFixed(2)}đ
+                                      </span>
+                                      <span className="font-mono font-bold text-[8.5pt] text-[#1e3a8a] bg-[#eff6ff] px-1 rounded-xs border border-[#bfdbfe] ml-1 shrink-0">
+                                        Tr. {String(p.pageNumber).padStart(2, '0')}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+
+                            {/* Column 3: System & Subject + Status */}
+                            <td
+                              style={{ padding: '6px 8px' }}
+                              className="border border-black text-neutral-800 text-[8.8pt]"
+                            >
+                              <div className="font-semibold text-black">
+                                {meta.sysName}
+                              </div>
+                              <div className="text-neutral-600">
+                                › {meta.subName}
+                              </div>
+                              <div className="mt-1 inline-block px-1.5 py-0.2 rounded-xs bg-neutral-100 border border-neutral-300 font-mono text-[7.8pt] text-neutral-700">
+                                {meta.statusLabel}
+                              </div>
+                            </td>
+
+                            {/* Column 4: Structure & Barem Summary */}
+                            <td
+                              style={{ padding: '6px 6px' }}
+                              className="border border-black text-center font-mono text-[8.5pt]"
+                            >
+                              <div className="font-bold text-black">
+                                {meta.pillarCount} mục lớn · {meta.lvl2TotalCount} ý
+                              </div>
+                              <div className="text-neutral-700 mt-0.5">
+                                {meta.rubricItemsCount} tiêu chí ({meta.keywordsCount} từ khóa)
+                              </div>
+                              <div className="mt-0.5 font-bold text-[#15803d]">
+                                Barem: {meta.totalPoints.toFixed(1)}đ
+                              </div>
+                            </td>
+
+                            {/* Column 5: Study Progress Checkboxes */}
+                            <td
+                              style={{ padding: '6px 6px' }}
+                              className="border border-black text-left font-mono text-[8.2pt] leading-relaxed"
+                            >
+                              <div>[ ] Ôn lần 1</div>
+                              <div>[ ] Ôn lần 2</div>
+                              <div className="font-bold text-black">
+                                [ ] Đã thuộc
+                              </div>
+                            </td>
+
+                            {/* Column 6: Page Numbers */}
+                            <td
+                              style={{ padding: '6px 6px' }}
+                              className="border border-black text-center font-mono bg-[#f8fafc]"
+                            >
+                              <div className="inline-block px-1.5 py-0.5 rounded bg-[#dbeafe] border border-[#3b82f6] font-extrabold text-[9.5pt] text-[#1e3a8a]">
+                                {meta.pageRangeLabel}
+                              </div>
+                              <div className="text-[7.8pt] text-neutral-600 mt-0.5">
+                                ({meta.pageCount} trang A4)
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
+                      <tfoot>
+                        <tr className="bg-neutral-100 border-t-2 border-black font-bold text-[9pt] text-black">
+                          <td
+                            colSpan={3}
+                            style={{ padding: '5px 8px' }}
+                            className="border border-black text-right uppercase"
+                          >
+                            Tổng cộng toàn bộ Tập Đề Cương ({tocPaginationData.totalLessons} bài):
+                          </td>
+                          <td
+                            style={{ padding: '5px 6px' }}
+                            className="border border-black text-center font-mono"
+                          >
+                            {tocPaginationData.totalPillars} mục ·{' '}
+                            {tocPaginationData.totalRubricItems} ý Barem
+                          </td>
+                          <td
+                            style={{ padding: '5px 6px' }}
+                            className="border border-black text-center font-mono text-[8.2pt]"
+                          >
+                            Đạt: .... / {tocPaginationData.totalLessons} bài
+                          </td>
+                          <td
+                            style={{ padding: '5px 6px' }}
+                            className="border border-black text-center font-mono font-extrabold text-[#1e3a8a] bg-[#dbeafe]"
+                          >
+                            {tocPaginationData.totalDocumentPages} trang
+                          </td>
+                        </tr>
+                      </tfoot>
                     </table>
                   </div>
                 </div>
 
+                {/* Running Footer on Cover / TOC Page */}
+                <div className="mt-2 pt-1.5 border-t border-neutral-400 flex items-center justify-between gap-2 text-[8pt] font-mono text-neutral-700">
+                  <div>
+                    MedMind Print Studio Pro · Bảng Mục Lục & Định Vị Trang Tự Động
+                  </div>
+                  <div className="font-bold text-[#1e3a8a]">
+                    Trang 01 / Tổng{' '}
+                    {String(tocPaginationData.totalDocumentPages).padStart(
+                      2,
+                      '0'
+                    )}{' '}
+                    trang
+                  </div>
+                </div>
+
                 <div className="screen-page-divider mt-4 py-1.5 border-y-2 border-dashed border-[#3b82f6] bg-[#eff6ff] text-center text-[11px] font-mono font-bold text-[#1d4ed8]">
-                  ✂️ ————— HẾT TRANG BÌA & MỤC LỤC · BẮT ĐẦU NỘI DUNG BÀI HỌC 01 —————
+                  ✂️ ————— HẾT TRANG BÌA & MỤC LỤC (TRANG 01) · BẮT ĐẦU NỘI DUNG BÀI HỌC 01 (
+                  {tocPaginationData.lessonsMeta[0]?.pageRangeLabel || 'Tr. 02'}) —————
                 </div>
               </div>
             )}
@@ -2538,14 +3355,47 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
 
         <style>{`
           @page {
-            size: A4;
+            size: ${isLandscape ? 'A4 landscape' : 'A4 portrait'};
             margin: 10mm;
           }
+          #medmind-print-portal {
+            display: none;
+          }
           @media print {
-            html, body, #root, .fixed {
+            body > *:not(#medmind-print-portal) {
+              display: none !important;
+            }
+            html, body {
+              background-color: #ffffff !important;
+              color: #111827 !important;
               height: auto !important;
               overflow: visible !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            #medmind-print-portal {
+              display: block !important;
               position: static !important;
+              width: 100% !important;
+              height: auto !important;
+              overflow: visible !important;
+              background-color: #ffffff !important;
+              color: #111827 !important;
+              margin: 0 !important;
+              padding: 0 !important;
+            }
+            .screen-page-divider, .no-print {
+              display: none !important;
+            }
+            .a4-page-break {
+              page-break-after: always !important;
+              break-after: page !important;
+            }
+            tr, .avoid-break {
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
             }
           }
         `}</style>
@@ -2553,4 +3403,5 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
     </div>
   );
 };
+
 
