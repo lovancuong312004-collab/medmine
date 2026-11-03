@@ -911,10 +911,13 @@ export default function App() {
   );
 
   /**
-   * Move a lesson Up or Down within its Subject list
+   * Move a lesson Up, Down, Top, Bottom, or to a specific 0-based index within its Subject list
    */
   const handleMoveLessonOrder = useCallback(
-    (lessonId: string, direction: 'up' | 'down') => {
+    (
+      lessonId: string,
+      action: 'up' | 'down' | 'top' | 'bottom' | number
+    ) => {
       if (isReadOnly) return;
       setDatabase((prev) => {
         const target = prev.lessons.find((l) => l.id === lessonId);
@@ -924,13 +927,23 @@ export default function App() {
         );
         const pos = subjectLessons.findIndex((l) => l.id === lessonId);
         if (pos === -1) return prev;
-        const swapPos = direction === 'up' ? pos - 1 : pos + 1;
-        if (swapPos < 0 || swapPos >= subjectLessons.length) return prev;
+
+        let nextPos = pos;
+        if (action === 'up') nextPos = pos - 1;
+        else if (action === 'down') nextPos = pos + 1;
+        else if (action === 'top') nextPos = 0;
+        else if (action === 'bottom') nextPos = subjectLessons.length - 1;
+        else if (typeof action === 'number') {
+          nextPos = Math.max(0, Math.min(subjectLessons.length - 1, action));
+        }
+
+        if (nextPos === pos || nextPos < 0 || nextPos >= subjectLessons.length) {
+          return prev;
+        }
 
         const reorderedSub = [...subjectLessons];
-        const temp = reorderedSub[pos];
-        reorderedSub[pos] = reorderedSub[swapPos];
-        reorderedSub[swapPos] = temp;
+        const [movedItem] = reorderedSub.splice(pos, 1);
+        reorderedSub.splice(nextPos, 0, movedItem);
 
         let cursor = 0;
         const nextLessons = prev.lessons.map((l) =>
@@ -947,6 +960,143 @@ export default function App() {
     },
     [isReadOnly, triggerBackgroundCloudPush]
   );
+
+  /**
+   * Move a lesson to another Subject (and automatically update its parent Organ System)
+   */
+  const handleMoveLessonToSubject = useCallback(
+    (lessonId: string, targetSubjectId: string) => {
+      if (isReadOnly) return;
+      setDatabase((prev) => {
+        const targetSubject = prev.subjects.find(
+          (sub) => sub.id === targetSubjectId
+        );
+        if (!targetSubject) return prev;
+        const targetLesson = prev.lessons.find((l) => l.id === lessonId);
+        if (!targetLesson || targetLesson.subjectId === targetSubjectId) {
+          return prev;
+        }
+
+        const updatedLessons = prev.lessons.map((l) =>
+          l.id === lessonId
+            ? {
+                ...l,
+                subjectId: targetSubject.id,
+                systemId: targetSubject.systemId,
+                updatedAt: new Date().toISOString(),
+              }
+            : l
+        );
+
+        const nextDb: MedMindDatabase = {
+          ...prev,
+          lessons: updatedLessons,
+        };
+        triggerBackgroundCloudPush(nextDb);
+        return nextDb;
+      });
+
+      const subObj = database.subjects.find((s) => s.id === targetSubjectId);
+      const sysObj = database.systems.find((s) => s.id === subObj?.systemId);
+      if (subObj) {
+        showToast(
+          `📁 Đã chuyển bài học sang "${sysObj ? `${sysObj.name} › ` : ''}${subObj.name}"`
+        );
+      }
+    },
+    [isReadOnly, database.subjects, database.systems, triggerBackgroundCloudPush, showToast]
+  );
+
+  /**
+   * Drag-and-Drop Reorder: Drop `draggedLessonId` right before or after `targetLessonId`
+   * (Also seamlessly moves the lesson into `targetLessonId`'s Subject/System if dragged across folders!)
+   */
+  const handleReorderLessonByDrop = useCallback(
+    (
+      draggedLessonId: string,
+      targetLessonId: string,
+      position: 'before' | 'after'
+    ) => {
+      if (isReadOnly || draggedLessonId === targetLessonId) return;
+      setDatabase((prev) => {
+        const dragged = prev.lessons.find((l) => l.id === draggedLessonId);
+        const target = prev.lessons.find((l) => l.id === targetLessonId);
+        if (!dragged || !target) return prev;
+
+        const movedLesson: LessonMindmap = {
+          ...dragged,
+          subjectId: target.subjectId,
+          systemId: target.systemId,
+          updatedAt: new Date().toISOString(),
+        };
+
+        const withoutDragged = prev.lessons.filter(
+          (l) => l.id !== draggedLessonId
+        );
+        const targetIdx = withoutDragged.findIndex(
+          (l) => l.id === targetLessonId
+        );
+        if (targetIdx === -1) return prev;
+
+        const insertIdx = position === 'before' ? targetIdx : targetIdx + 1;
+        const nextLessons = [...withoutDragged];
+        nextLessons.splice(insertIdx, 0, movedLesson);
+
+        const nextDb: MedMindDatabase = {
+          ...prev,
+          lessons: nextLessons,
+        };
+        triggerBackgroundCloudPush(nextDb);
+        return nextDb;
+      });
+    },
+    [isReadOnly, triggerBackgroundCloudPush]
+  );
+
+  /**
+   * Apply a full custom ordered array of lesson IDs (e.g. synced from Print Studio Pro)
+   */
+  const handleApplyCustomLessonOrder = useCallback(
+    (orderedIds: string[]) => {
+      if (isReadOnly || !Array.isArray(orderedIds) || orderedIds.length === 0) {
+        return;
+      }
+      setDatabase((prev) => {
+        const orderMap = new Map<string, number>();
+        orderedIds.forEach((id, index) => orderMap.set(id, index));
+
+        const nextLessons = [...prev.lessons].sort(
+          (a, b) =>
+            (orderMap.get(a.id) ?? 99999) - (orderMap.get(b.id) ?? 99999)
+        );
+
+        // Avoid state update if order is already identical
+        const isSame = nextLessons.every(
+          (l, idx) => l.id === prev.lessons[idx]?.id
+        );
+        if (isSame) return prev;
+
+        const nextDb: MedMindDatabase = {
+          ...prev,
+          lessons: nextLessons,
+        };
+        triggerBackgroundCloudPush(nextDb);
+        return nextDb;
+      });
+    },
+    [isReadOnly, triggerBackgroundCloudPush]
+  );
+
+  const handleSelectLesson = useCallback((id: string) => {
+    setActiveLessonId(id);
+    setDatabase((prev) => {
+      const found = prev.lessons.find((l) => l.id === id);
+      if (found?.rootNode?.id) {
+        setSelectedNodeId(found.rootNode.id);
+      }
+      return prev;
+    });
+  }, []);
 
   const handleUpdateSecuritySettings = (newSecurity: SecuritySettings) => {
     if (isReadOnly) return;
@@ -1106,11 +1256,7 @@ export default function App() {
           isMobileOpen={isMobileSidebarOpen}
           onCloseMobile={() => setIsMobileSidebarOpen(false)}
           onLogout={handleLogout}
-          onSelectLesson={(id) => {
-            setActiveLessonId(id);
-            const found = database.lessons.find((l) => l.id === id);
-            if (found) setSelectedNodeId(found.rootNode.id);
-          }}
+          onSelectLesson={handleSelectLesson}
           onCreateSystem={handleCreateSystem}
           onRenameSystem={handleRenameSystem}
           onDeleteSystem={handleDeleteSystem}
@@ -1122,6 +1268,8 @@ export default function App() {
           onUpdateLessonStatus={handleUpdateLessonStatus}
           onSortLessonsNaturally={handleSortLessonsNaturally}
           onMoveLessonOrder={handleMoveLessonOrder}
+          onMoveLessonToSubject={handleMoveLessonToSubject}
+          onReorderLessonByDrop={handleReorderLessonByDrop}
           onOpenImporter={() => !isReadOnly && setIsImporterOpen(true)}
           onOpenCloudModal={() => setIsCloudModalOpen(true)}
           onExportDatabaseJson={handleExportDatabaseJson}
@@ -1509,6 +1657,8 @@ export default function App() {
           rootNode={activeLesson.rootNode}
           onSortLessonsNaturally={handleSortLessonsNaturally}
           onMoveLessonOrder={handleMoveLessonOrder}
+          onMoveLessonToSubject={handleMoveLessonToSubject}
+          onApplyCustomLessonOrder={handleApplyCustomLessonOrder}
           onClose={() => setIsPrintStudioOpen(false)}
         />
       )}

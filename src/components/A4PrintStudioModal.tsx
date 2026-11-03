@@ -24,6 +24,8 @@ import {
   ArrowUpDown,
   ChevronsUp,
   ChevronsDown,
+  GripVertical,
+  FolderInput,
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas-pro';
@@ -99,7 +101,12 @@ interface A4PrintStudioModalProps {
   subjectName?: string;
   rootNode: MindmapNode;
   onSortLessonsNaturally?: (subjectId?: string) => void;
-  onMoveLessonOrder?: (lessonId: string, direction: 'up' | 'down') => void;
+  onMoveLessonOrder?: (
+    lessonId: string,
+    action: 'up' | 'down' | 'top' | 'bottom' | number
+  ) => void;
+  onMoveLessonToSubject?: (lessonId: string, targetSubjectId: string) => void;
+  onApplyCustomLessonOrder?: (orderedIds: string[]) => void;
   onClose: () => void;
 }
 
@@ -414,6 +421,8 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
   subjectName,
   rootNode,
   onSortLessonsNaturally,
+  onMoveLessonToSubject,
+  onApplyCustomLessonOrder,
   onClose,
 }) => {
   const safeActiveRootNode = useMemo(
@@ -479,10 +488,18 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
   // Default to 'natural_asc' so Câu 1, Câu 2, ..., Câu 13 are ALWAYS sorted 1 -> 13 automatically!
   const [lessonSortOrder, setLessonSortOrder] =
     useState<LessonSortOrderMode>('natural_asc');
-  // Custom manual ordering array of lesson IDs so the user can move any lesson Up/Down/Top/Bottom
+  // Custom manual ordering array of lesson IDs so the user can move any lesson Up/Down/Top/Bottom or Drag-and-Drop
   const [customOrderIds, setCustomOrderIds] = useState<string[]>(() =>
     [...allLessons].sort(compareLessonsNaturally).map((l) => l.id)
   );
+  // Drag-and-drop state inside Print Studio Lesson Organizer
+  const [draggedQueueLessonId, setDraggedQueueLessonId] = useState<
+    string | null
+  >(null);
+  const [queueDropIndicator, setQueueDropIndicator] = useState<{
+    targetId: string;
+    position: 'before' | 'after';
+  } | null>(null);
   // Intra-lesson branch sorting mode ('natural_number' | 'medical_standard' | 'keep')
   const [intraLessonSort, setIntraLessonSort] =
     useState<IntraLessonSortMode>('natural_number');
@@ -1045,13 +1062,13 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
   };
 
   /**
-   * Move a lesson Up, Down, to Top, or to Bottom in the Print Studio queue
+   * Move a lesson Up, Down, to Top, to Bottom, or to a specific 0-based index in the Print Studio queue,
+   * and synchronize the new order back to the main Database & Sidebar!
    */
   const handleReorderLessonInPrintQueue = (
     lessonId: string,
-    action: 'up' | 'down' | 'top' | 'bottom'
+    action: 'up' | 'down' | 'top' | 'bottom' | number
   ) => {
-    // Seed from the current displayed order so moving 1 step behaves intuitively
     const currentIds = orderedAllLessons.map((l) => l.id);
     const idx = currentIds.indexOf(lessonId);
     if (idx === -1) return;
@@ -1071,10 +1088,40 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
     } else if (action === 'bottom' && idx < nextIds.length - 1) {
       const [item] = nextIds.splice(idx, 1);
       nextIds.push(item);
+    } else if (typeof action === 'number') {
+      const targetIdx = Math.max(0, Math.min(nextIds.length - 1, action));
+      if (targetIdx !== idx) {
+        const [item] = nextIds.splice(idx, 1);
+        nextIds.splice(targetIdx, 0, item);
+      }
     }
 
     setCustomOrderIds(nextIds);
     setLessonSortOrder('manual_custom');
+    onApplyCustomLessonOrder?.(nextIds);
+  };
+
+  /**
+   * Drag-and-Drop Reorder inside Print Studio Lesson Organizer
+   */
+  const handleDropReorderInPrintQueue = (
+    draggedId: string,
+    targetId: string,
+    position: 'before' | 'after'
+  ) => {
+    if (!draggedId || !targetId || draggedId === targetId) return;
+    const currentIds = orderedAllLessons.map((l) => l.id);
+    const withoutDragged = currentIds.filter((id) => id !== draggedId);
+    const targetIdx = withoutDragged.indexOf(targetId);
+    if (targetIdx === -1) return;
+
+    const insertIdx = position === 'before' ? targetIdx : targetIdx + 1;
+    const nextIds = [...withoutDragged];
+    nextIds.splice(insertIdx, 0, draggedId);
+
+    setCustomOrderIds(nextIds);
+    setLessonSortOrder('manual_custom');
+    onApplyCustomLessonOrder?.(nextIds);
   };
 
   /**
@@ -3630,6 +3677,37 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
       ? 'Bảng Kiểm Lâm Sàng OSCE & Bệnh Án'
       : 'Đề Thi Thử Tự Luận & Đáp Án Barem';
 
+  // Memoize rendered A4 lesson sheets so opening/closing popovers, dragging items before drop,
+  // or typing in search/cover inputs never re-renders all 20 lesson templates
+  const renderedLessonSheets = useMemo(
+    () =>
+      lessonsToPrint.map((lesson, idx) =>
+        renderSingleLessonTemplate(lesson, idx, lessonsToPrint.length)
+      ),
+    [
+      lessonsToPrint,
+      template,
+      totalPointsScale,
+      activeStudyCloze,
+      printColorMode,
+      singleLessonPillarScope,
+      batchMode,
+      intraLessonSort,
+      infographicColLayout,
+      fishboneOrFlowchart,
+      worksheetShowLevel2,
+      worksheetShowKeywordCount,
+      worksheetLinesPerItem,
+      flashcardShowHints,
+      examDurationMinutes,
+      examIncludeAnswerKey,
+      showKeywordChecklistBox,
+      showSpacedRepetitionBox,
+      tocPaginationData.lessonsMeta,
+      tocPaginationData.totalDocumentPages,
+    ]
+  );
+
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 md:p-4">
       <div className="w-full max-w-[1440px] h-[95vh] bg-[#131314] border border-[#2d2e30] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
@@ -4135,8 +4213,18 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                       | 'sidebar_order'
                       | 'reverse';
                     setLessonSortOrder(nextOrder);
-                    if (nextOrder === 'natural_asc' && onSortLessonsNaturally) {
-                      onSortLessonsNaturally();
+                    if (nextOrder === 'natural_asc') {
+                      const sortedIds = [...allLessons]
+                        .sort(compareLessonsNaturally)
+                        .map((l) => l.id);
+                      setCustomOrderIds(sortedIds);
+                      onSortLessonsNaturally?.();
+                    } else if (nextOrder === 'manual_custom') {
+                      if (batchMode === 'current' && allLessons.length > 1) {
+                        setBatchMode('folder');
+                        setFolderTarget('all_library');
+                      }
+                      setIsMultiSelectOpen(true);
                     }
                   }}
                   className="bg-transparent text-[11.5px] font-semibold text-[#8ab4f8] focus:outline-none cursor-pointer"
@@ -4155,6 +4243,27 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                     🔄 Đảo ngược (Câu N ➔ 1)
                   </option>
                 </select>
+
+                {/* Direct 1-click button to open the Drag-and-Drop Reorder Queue from ANY mode */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (batchMode === 'current' && allLessons.length > 1) {
+                      setBatchMode('custom');
+                      setSelectedLessonIds(orderedAllLessons.map((l) => l.id));
+                    }
+                    setIsMultiSelectOpen((prev) => !prev);
+                  }}
+                  className={`ml-1 px-2 py-0.5 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer ${
+                    isMultiSelectOpen
+                      ? 'bg-[#8ab4f8] text-[#131314]'
+                      : 'bg-[#242528] hover:bg-[#3c4043] text-white border border-[#8ab4f8]/40'
+                  }`}
+                  title="Mở bảng Kéo thả & Sắp xếp vị trí các bài học (Đồng bộ với Sidebar)"
+                >
+                  <GripVertical className="w-3 h-3" />
+                  <span>Sắp xếp / Di chuyển</span>
+                </button>
               </div>
             )}
 
@@ -4229,17 +4338,22 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
           </div>
 
           {/* =============================================================== */}
-          {/* MULTI-SELECT & REORDER LESSON PICKER POPOVER                    */}
+          {/* UNIVERSAL DRAG-AND-DROP & MULTI-SELECT LESSON ORGANIZER POPOVER */}
           {/* =============================================================== */}
-          {batchMode === 'custom' && isMultiSelectOpen && (
-            <div className="absolute top-full left-5 mt-1 w-full max-w-[620px] bg-[#1e1f20] border border-[#8ab4f8]/60 rounded-2xl shadow-2xl z-40 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-[#2d2e30]">
+          {isMultiSelectOpen && (
+            <div className="absolute top-full left-5 mt-1 w-full max-w-[680px] bg-[#1e1f20] border border-[#8ab4f8]/60 rounded-2xl shadow-2xl z-40 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-2 border-b border-[#2d2e30]">
                 <div className="flex items-center gap-2">
-                  <FolderOpen className="w-4 h-4 text-[#8ab4f8]" />
-                  <span className="font-display font-bold text-[13.5px] text-white">
-                    Chọn & Sắp xếp thứ tự bài in ({lessonsToPrint.length}/
-                    {allLessons.length})
-                  </span>
+                  <GripVertical className="w-4 h-4 text-[#8ab4f8]" />
+                  <div>
+                    <div className="font-display font-bold text-[13.5px] text-white">
+                      Sắp xếp, Di chuyển & Chọn bài in ({lessonsToPrint.length}/
+                      {allLessons.length} bài)
+                    </div>
+                    <div className="text-[11px] text-[#9aa0a6]">
+                      Kéo thả trực tiếp dòng bài học, chọn số vị trí #1, #2... hoặc bấm ⬆️ ⬇️ (Tự động đồng bộ với Sidebar)
+                    </div>
+                  </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <button
@@ -4249,9 +4363,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                         .map((l) => l.id);
                       setCustomOrderIds(sortedIds);
                       setLessonSortOrder('natural_asc');
-                      if (onSortLessonsNaturally) {
-                        onSortLessonsNaturally();
-                      }
+                      onSortLessonsNaturally?.();
                     }}
                     className="px-2 py-1 rounded bg-[#10b981]/20 border border-[#10b981]/60 hover:bg-[#10b981]/30 text-[11px] font-bold text-[#6ee7b7] cursor-pointer"
                     title="Tự động xếp theo Câu 1 ➔ Câu 2 ➔ Câu 3... và lưu vào Sidebar"
@@ -4260,6 +4372,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                   </button>
                   <button
                     onClick={() => {
+                      setBatchMode('custom');
                       setBatchFallbackNotice(null);
                       setSelectedLessonIds(orderedAllLessons.map((l) => l.id));
                     }}
@@ -4269,6 +4382,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                   </button>
                   <button
                     onClick={() => {
+                      setBatchMode('custom');
                       setBatchFallbackNotice(null);
                       setSelectedLessonIds([currentLessonObj.id]);
                     }}
@@ -4280,25 +4394,25 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                     onClick={() => setIsMultiSelectOpen(false)}
                     className="px-2.5 py-1 rounded bg-[#8ab4f8] text-[#131314] font-bold text-[11px] cursor-pointer"
                   >
-                    Xong
+                    ✓ Xong
                   </button>
                 </div>
               </div>
 
-              {/* Search inside multi-select */}
+              {/* Search inside organizer */}
               <div className="relative mb-2.5">
                 <Search className="w-3.5 h-3.5 text-[#9aa0a6] absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={lessonSearchQuery}
                   onChange={(e) => setLessonSearchQuery(e.target.value)}
-                  placeholder="Tìm kiếm tên bài học để tích chọn hoặc bấm ⬆️ ⬇️ để đổi vị trí..."
+                  placeholder="Tìm kiếm bài học hoặc giữ chuột kéo thả dòng bài học để đổi thứ tự..."
                   className="w-full bg-[#131314] border border-[#3c4043] rounded-lg pl-8 pr-3 py-1.5 text-[12px] text-white focus:outline-none focus:border-[#8ab4f8]"
                 />
               </div>
 
-              {/* Lesson Checkbox & Reorder List */}
-              <div className="max-h-[300px] overflow-y-auto space-y-1 pr-1">
+              {/* Drag-and-Drop Lesson Checkbox & Reorder List */}
+              <div className="max-h-[320px] overflow-y-auto space-y-1.5 pr-1">
                 {orderedAllLessons
                   .filter((l) =>
                     String(l?.title || '')
@@ -4306,7 +4420,10 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                       .includes(lessonSearchQuery.toLowerCase())
                   )
                   .map((l, idx, arr) => {
-                    const checked = selectedLessonIds.includes(l.id);
+                    const checked =
+                      batchMode === 'custom'
+                        ? selectedLessonIds.includes(l.id)
+                        : lessonsToPrint.some((item) => item.id === l.id);
                     const { sysName, subName } = getLessonPathNames(l);
                     const pCount = Array.isArray(l?.rootNode?.children)
                       ? l.rootNode.children.length
@@ -4314,17 +4431,110 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                     const printOrderIdx = lessonsToPrint.findIndex(
                       (item) => item.id === l.id
                     );
+                    const isDraggingThis = draggedQueueLessonId === l.id;
+                    const isDropBefore =
+                      queueDropIndicator?.targetId === l.id &&
+                      queueDropIndicator?.position === 'before';
+                    const isDropAfter =
+                      queueDropIndicator?.targetId === l.id &&
+                      queueDropIndicator?.position === 'after';
+
                     return (
                       <div
                         key={l.id || idx}
-                        onClick={() => toggleLessonSelection(l.id)}
-                        className={`p-2 rounded-lg border flex items-center justify-between gap-2 cursor-pointer transition-colors ${
+                        draggable
+                        onDragStart={(e) => {
+                          setDraggedQueueLessonId(l.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                          e.dataTransfer.setData('text/plain', l.id);
+                        }}
+                        onDragOver={(e) => {
+                          if (!draggedQueueLessonId || draggedQueueLessonId === l.id) {
+                            return;
+                          }
+                          e.preventDefault();
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const pos: 'before' | 'after' =
+                            e.clientY - rect.top < rect.height / 2
+                              ? 'before'
+                              : 'after';
+                          if (
+                            queueDropIndicator?.targetId !== l.id ||
+                            queueDropIndicator?.position !== pos
+                          ) {
+                            setQueueDropIndicator({
+                              targetId: l.id,
+                              position: pos,
+                            });
+                          }
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const draggedId =
+                            e.dataTransfer.getData('text/plain') ||
+                            draggedQueueLessonId;
+                          if (draggedId && draggedId !== l.id) {
+                            const rect =
+                              e.currentTarget.getBoundingClientRect();
+                            const pos: 'before' | 'after' =
+                              e.clientY - rect.top < rect.height / 2
+                                ? 'before'
+                                : 'after';
+                            handleDropReorderInPrintQueue(draggedId, l.id, pos);
+                          }
+                          setDraggedQueueLessonId(null);
+                          setQueueDropIndicator(null);
+                        }}
+                        onDragEnd={() => {
+                          setDraggedQueueLessonId(null);
+                          setQueueDropIndicator(null);
+                        }}
+                        onClick={() => {
+                          if (batchMode !== 'custom') {
+                            setBatchMode('custom');
+                            const currentPrintedIds = lessonsToPrint.map(
+                              (item) => item.id
+                            );
+                            if (currentPrintedIds.includes(l.id)) {
+                              const filtered = currentPrintedIds.filter(
+                                (id) => id !== l.id
+                              );
+                              setSelectedLessonIds(
+                                filtered.length > 0 ? filtered : [l.id]
+                              );
+                            } else {
+                              setSelectedLessonIds([
+                                ...currentPrintedIds,
+                                l.id,
+                              ]);
+                            }
+                          } else {
+                            toggleLessonSelection(l.id);
+                          }
+                        }}
+                        className={`p-2 rounded-lg border flex items-center justify-between gap-2 cursor-pointer transition-all ${
+                          isDraggingThis ? 'opacity-45 scale-[0.98]' : ''
+                        } ${
+                          isDropBefore
+                            ? 'border-t-4 border-t-[#3b82f6]'
+                            : isDropAfter
+                            ? 'border-b-4 border-b-[#3b82f6]'
+                            : ''
+                        } ${
                           checked
                             ? 'bg-[#3f3c5c]/40 border-[#8ab4f8]/60 text-white'
                             : 'bg-[#131314] border-[#2d2e30] text-[#9aa0a6] hover:text-white'
                         }`}
                       >
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <span
+                            title="Giữ chuột kéo thả để đổi vị trí bài học"
+                            className="cursor-grab active:cursor-grabbing text-[#8ab4f8] shrink-0"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <GripVertical className="w-4 h-4" />
+                          </span>
+
                           {checked ? (
                             <CheckSquare className="w-4 h-4 text-[#8ab4f8] shrink-0" />
                           ) : (
@@ -4345,11 +4555,51 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                           </div>
                         </div>
 
-                        {/* Up / Down / Top / Bottom Reorder Buttons */}
+                        {/* Position Jump Dropdown + Folder Move + Up / Down / Top / Bottom Buttons */}
                         <div
                           className="flex items-center gap-1 shrink-0"
                           onClick={(e) => e.stopPropagation()}
                         >
+                          {/* Direct Position Jump Selector (#1 .. #N) */}
+                          <select
+                            value={idx}
+                            onChange={(e) =>
+                              handleReorderLessonInPrintQueue(
+                                l.id,
+                                Number(e.target.value)
+                              )
+                            }
+                            title="Nhảy thẳng tới vị trí số mấy trong danh sách"
+                            className="bg-[#131314] border border-[#8ab4f8]/50 text-[#8ab4f8] font-mono font-bold text-[10.5px] rounded px-1.5 py-0.5 cursor-pointer"
+                          >
+                            {orderedAllLessons.map((_, optIdx) => (
+                              <option key={optIdx} value={optIdx}>
+                                #{optIdx + 1}
+                              </option>
+                            ))}
+                          </select>
+
+                          {/* Optional Cross-Subject Move Selector */}
+                          {onMoveLessonToSubject &&
+                            database &&
+                            Array.isArray(database.subjects) &&
+                            database.subjects.length > 1 && (
+                              <select
+                                value={l.subjectId}
+                                onChange={(e) =>
+                                  onMoveLessonToSubject(l.id, e.target.value)
+                                }
+                                title="Di chuyển bài học này sang Học phần khác"
+                                className="bg-[#242528] border border-[#3c4043] text-[#e3e3e3] text-[10.5px] rounded px-1.5 py-0.5 max-w-[115px] truncate cursor-pointer"
+                              >
+                                {database.subjects.map((sub) => (
+                                  <option key={sub.id} value={sub.id}>
+                                    📁 {sub.name}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+
                           <button
                             type="button"
                             disabled={idx === 0}
@@ -4843,9 +5093,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
             {/* SEQUENTIAL MULTI-LESSON RENDERER WITH PAGE BREAKS             */}
             {/* ============================================================= */}
             <div className="space-y-4 bg-white text-[#111827]">
-              {lessonsToPrint.map((lesson, idx) =>
-                renderSingleLessonTemplate(lesson, idx, lessonsToPrint.length)
-              )}
+              {renderedLessonSheets}
             </div>
           </div>
         </div>

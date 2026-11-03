@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   ChevronRight,
   ChevronDown,
   Search,
   Plus,
   FolderPlus,
+  FolderInput,
   BookOpen,
   Dna,
   Microscope,
@@ -29,6 +30,7 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
+  GripVertical,
 } from 'lucide-react';
 import {
   MedMindDatabase,
@@ -53,7 +55,16 @@ interface SidebarCurriculumProps {
   onDeleteLesson: (lessonId: string) => void;
   onUpdateLessonStatus: (lessonId: string, status: LessonStudyStatus) => void;
   onSortLessonsNaturally?: (subjectId?: string) => void;
-  onMoveLessonOrder?: (lessonId: string, direction: 'up' | 'down') => void;
+  onMoveLessonOrder?: (
+    lessonId: string,
+    action: 'up' | 'down' | 'top' | 'bottom' | number
+  ) => void;
+  onMoveLessonToSubject?: (lessonId: string, targetSubjectId: string) => void;
+  onReorderLessonByDrop?: (
+    draggedLessonId: string,
+    targetLessonId: string,
+    position: 'before' | 'after'
+  ) => void;
   onOpenImporter: () => void;
   onOpenCloudModal: () => void;
   onExportDatabaseJson: () => void;
@@ -92,6 +103,8 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
   onUpdateLessonStatus,
   onSortLessonsNaturally,
   onMoveLessonOrder,
+  onMoveLessonToSubject,
+  onReorderLessonByDrop,
   onOpenImporter,
   onOpenCloudModal,
   onExportDatabaseJson,
@@ -107,14 +120,27 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | LessonStudyStatus>('ALL');
   const [expandedSystems, setExpandedSystems] = useState<Record<string, boolean>>({
+    'sys-ent': true,
     'sys-oncology': true,
     'sys-cardio': true,
     'sys-basic': true,
   });
   const [expandedSubjects, setExpandedSubjects] = useState<Record<string, boolean>>({
+    'sub-ent-clin': true,
     'sub-onco-path': true,
     'sub-cardio-int': true,
   });
+
+  // Dedicated Organize & Move Mode + Drag-and-Drop states
+  const [isOrganizeMode, setIsOrganizeMode] = useState(false);
+  const [draggedLessonId, setDraggedLessonId] = useState<string | null>(null);
+  const [dropIndicator, setDropIndicator] = useState<{
+    targetId: string;
+    position: 'before' | 'after' | 'subject';
+  } | null>(null);
+  const [movingLessonFolderId, setMovingLessonFolderId] = useState<string | null>(
+    null
+  );
 
   // Inline creation states
   const [addingSystem, setAddingSystem] = useState(false);
@@ -136,6 +162,20 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
     name: string;
     subCount?: number;
   } | null>(null);
+
+  // Memoize mastery stats per lesson so switching lessons or dragging never re-traverses 20+ trees
+  const lessonStatsMap = useMemo(() => {
+    const map = new Map<
+      string,
+      { total: number; mastered: number; review: number; untested: number; percent: number }
+    >();
+    database.lessons.forEach((l) => {
+      if (l?.id && l.rootNode) {
+        map.set(l.id, calculateMasteryStats(l.rootNode));
+      }
+    });
+    return map;
+  }, [database.lessons]);
 
   const toggleSystem = (id: string) => {
     setExpandedSystems((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -184,14 +224,14 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
     setConfirmDelete(null);
   };
 
+  const normalizedQuery = searchQuery.trim().toLowerCase();
   const matchesSearch = (lesson: LessonMindmap) => {
     if (statusFilter !== 'ALL' && lesson.status !== statusFilter) return false;
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
+    if (!normalizedQuery) return true;
     return (
-      lesson.title.toLowerCase().includes(q) ||
-      lesson.tags.some((t) => t.toLowerCase().includes(q)) ||
-      JSON.stringify(lesson.rootNode).toLowerCase().includes(q)
+      lesson.title.toLowerCase().includes(normalizedQuery) ||
+      lesson.tags.some((t) => t.toLowerCase().includes(normalizedQuery)) ||
+      JSON.stringify(lesson.rootNode).toLowerCase().includes(normalizedQuery)
     );
   };
 
@@ -421,41 +461,75 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
           </div>
         </div>
 
-        {/* 3-Tier Curriculum Tree Header */}
+        {/* 3-Tier Curriculum Tree Header + Quick Sort & Organize Bar */}
         <div
-          className={`px-3 py-2 flex items-center justify-between gap-1 text-[11px] font-medium border-b ${
+          className={`px-3 py-2 flex flex-col gap-1.5 text-[11px] font-medium border-b ${
             isLight
               ? 'text-slate-500 border-slate-200 bg-slate-50/60'
               : 'text-[#9aa0a6] border-[#2d2e30]/60'
           }`}
         >
-          <span className="truncate">HỆ / HỌC PHẦN / BÀI HỌC</span>
-          {!isReadOnly && (
-            <div className="flex items-center gap-2 shrink-0">
-              {onSortLessonsNaturally && database.lessons.length > 1 && (
-                <button
-                  onClick={() => onSortLessonsNaturally()}
-                  title="Tự động sắp xếp tất cả bài học theo đúng thứ tự Câu 1 ➔ Câu N"
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
-                    isLight
-                      ? 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 font-semibold'
-                      : 'bg-[#242528] border-[#3c4043] text-[#8ab4f8] hover:bg-[#2d2e30]'
-                  }`}
-                >
-                  <ArrowUpDown className="w-3 h-3" />
-                  <span>Xếp Câu 1➔N</span>
-                </button>
-              )}
+          <div className="flex items-center justify-between gap-1">
+            <span className="truncate font-semibold">HỆ / HỌC PHẦN / BÀI HỌC</span>
+            {!isReadOnly && (
               <button
                 onClick={() => setAddingSystem(true)}
                 title="Thêm Khối / Hệ cơ quan mới (Tầng 1)"
-                className={`flex items-center gap-1 hover:underline cursor-pointer ${
+                className={`flex items-center gap-1 hover:underline cursor-pointer shrink-0 ${
                   isLight ? 'text-blue-600 font-semibold' : 'text-[#8ab4f8]'
                 }`}
               >
                 <FolderPlus className="w-3.5 h-3.5" />
                 <span>+ Hệ mới</span>
               </button>
+            )}
+          </div>
+
+          {!isReadOnly && database.lessons.length > 1 && (
+            <div className="flex items-center gap-1.5">
+              {onSortLessonsNaturally && (
+                <button
+                  onClick={() => onSortLessonsNaturally()}
+                  title="Tự động sắp xếp tất cả bài học theo đúng thứ tự Câu 1 ➔ Câu N"
+                  className={`flex-1 flex items-center justify-center gap-1 px-2 py-1 rounded-lg border text-[11px] transition-colors cursor-pointer ${
+                    isLight
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 font-semibold'
+                      : 'bg-[#242528] border-[#3c4043] text-[#8ab4f8] hover:bg-[#2d2e30] font-semibold'
+                  }`}
+                >
+                  <ArrowUpDown className="w-3 h-3 shrink-0" />
+                  <span>Xếp Câu 1➔N</span>
+                </button>
+              )}
+
+              <button
+                onClick={() => setIsOrganizeMode((prev) => !prev)}
+                title="Bật chế độ Kéo thả, Đổi vị trí (#1, #2...) và Di chuyển bài học sang Học phần khác"
+                className={`flex-1 flex items-center justify-center gap-1 px-2 py-1 rounded-lg border text-[11px] transition-colors cursor-pointer ${
+                  isOrganizeMode
+                    ? isLight
+                      ? 'bg-emerald-600 border-emerald-700 text-white font-bold shadow-xs'
+                      : 'bg-[#10b981]/25 border-[#10b981] text-[#6ee7b7] font-bold'
+                    : isLight
+                    ? 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100 font-medium'
+                    : 'bg-[#131314] border-[#3c4043] text-[#e3e3e3] hover:bg-[#2d2e30]'
+                }`}
+              >
+                <GripVertical className="w-3 h-3 shrink-0" />
+                <span>{isOrganizeMode ? '✓ Xong sắp xếp' : 'Di chuyển / Xếp'}</span>
+              </button>
+            </div>
+          )}
+
+          {isOrganizeMode && !isReadOnly && (
+            <div
+              className={`px-2 py-1 rounded-md text-[10.5px] leading-snug ${
+                isLight
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                  : 'bg-[#10b981]/10 text-[#a7f3d0] border border-[#10b981]/30'
+              }`}
+            >
+              💡 <strong>Mẹo:</strong> Kéo thả trực tiếp thẻ bài học để đổi chỗ, chọn số <strong>#1, #2...</strong> để nhảy vị trí, hoặc thả vào tên <strong>Học phần</strong> để chuyển thư mục!
             </div>
           )}
         </div>
@@ -694,11 +768,55 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
                         editingItem?.type === 'subject' &&
                         editingItem.id === subject.id;
 
+                      const isDropTargetSubject =
+                        dropIndicator?.targetId === subject.id &&
+                        dropIndicator?.position === 'subject';
+
                       return (
                         <div key={subject.id}>
                           <div
-                            className={`group/sub flex items-center justify-between px-2 py-1 rounded-md transition-colors ${
-                              isLight
+                            onDragOver={(e) => {
+                              if (isReadOnly || !draggedLessonId) return;
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (
+                                dropIndicator?.targetId !== subject.id ||
+                                dropIndicator?.position !== 'subject'
+                              ) {
+                                setDropIndicator({
+                                  targetId: subject.id,
+                                  position: 'subject',
+                                });
+                              }
+                            }}
+                            onDragLeave={() => {
+                              if (dropIndicator?.targetId === subject.id) {
+                                setDropIndicator(null);
+                              }
+                            }}
+                            onDrop={(e) => {
+                              if (isReadOnly || !draggedLessonId) return;
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const draggedId =
+                                e.dataTransfer.getData('text/plain') ||
+                                draggedLessonId;
+                              if (draggedId && onMoveLessonToSubject) {
+                                onMoveLessonToSubject(draggedId, subject.id);
+                                setExpandedSubjects((prev) => ({
+                                  ...prev,
+                                  [subject.id]: true,
+                                }));
+                              }
+                              setDraggedLessonId(null);
+                              setDropIndicator(null);
+                            }}
+                            className={`group/sub flex items-center justify-between px-2 py-1 rounded-md transition-all ${
+                              isDropTargetSubject
+                                ? isLight
+                                  ? 'bg-blue-100 ring-2 ring-blue-500'
+                                  : 'bg-[#3f3c5c] ring-2 ring-[#8ab4f8]'
+                                : isLight
                                 ? 'hover:bg-slate-100'
                                 : 'hover:bg-[#2d2e30]/40'
                             }`}
@@ -812,7 +930,7 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
                             </div>
                           </div>
 
-                          {/* TIER 3: Mindmap Lessons */}
+                          {/* TIER 3: Mindmap Lessons (with Drag-and-Drop & Move Controls) */}
                           {isSubjectOpen && subjectLessons.length > 0 && (
                             <div
                               className={`ml-3 pl-2 border-l space-y-1.5 my-1 ${
@@ -823,16 +941,99 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
                             >
                               {subjectLessons.map((lesson, lessonIdx) => {
                                 const isActive = lesson.id === activeLessonId;
-                                const stats = calculateMasteryStats(
-                                  lesson.rootNode
-                                );
+                                const stats = lessonStatsMap.get(lesson.id) || {
+                                  total: 0,
+                                  mastered: 0,
+                                  review: 0,
+                                  untested: 0,
+                                  percent: 0,
+                                };
                                 const isEditingLesson =
                                   editingItem?.type === 'lesson' &&
                                   editingItem.id === lesson.id;
+                                const isBeingDragged =
+                                  draggedLessonId === lesson.id;
+                                const isDropBefore =
+                                  dropIndicator?.targetId === lesson.id &&
+                                  dropIndicator?.position === 'before';
+                                const isDropAfter =
+                                  dropIndicator?.targetId === lesson.id &&
+                                  dropIndicator?.position === 'after';
+                                const showMoveFolderSelect =
+                                  movingLessonFolderId === lesson.id ||
+                                  (isOrganizeMode &&
+                                    database.subjects.length > 1);
 
                                 return (
                                   <div
                                     key={lesson.id}
+                                    draggable={!isReadOnly && !isEditingLesson}
+                                    onDragStart={(e) => {
+                                      if (isReadOnly || isEditingLesson) return;
+                                      setDraggedLessonId(lesson.id);
+                                      e.dataTransfer.effectAllowed = 'move';
+                                      e.dataTransfer.setData(
+                                        'text/plain',
+                                        lesson.id
+                                      );
+                                    }}
+                                    onDragOver={(e) => {
+                                      if (
+                                        isReadOnly ||
+                                        !draggedLessonId ||
+                                        draggedLessonId === lesson.id
+                                      ) {
+                                        return;
+                                      }
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      const rect =
+                                        e.currentTarget.getBoundingClientRect();
+                                      const pos: 'before' | 'after' =
+                                        e.clientY - rect.top < rect.height / 2
+                                          ? 'before'
+                                          : 'after';
+                                      if (
+                                        dropIndicator?.targetId !== lesson.id ||
+                                        dropIndicator?.position !== pos
+                                      ) {
+                                        setDropIndicator({
+                                          targetId: lesson.id,
+                                          position: pos,
+                                        });
+                                      }
+                                    }}
+                                    onDrop={(e) => {
+                                      if (isReadOnly) return;
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      const draggedId =
+                                        e.dataTransfer.getData('text/plain') ||
+                                        draggedLessonId;
+                                      if (
+                                        draggedId &&
+                                        draggedId !== lesson.id &&
+                                        onReorderLessonByDrop
+                                      ) {
+                                        const rect =
+                                          e.currentTarget.getBoundingClientRect();
+                                        const pos: 'before' | 'after' =
+                                          e.clientY - rect.top < rect.height / 2
+                                            ? 'before'
+                                            : 'after';
+                                        onReorderLessonByDrop(
+                                          draggedId,
+                                          lesson.id,
+                                          pos
+                                        );
+                                      }
+                                      setDraggedLessonId(null);
+                                      setDropIndicator(null);
+                                    }}
+                                    onDragEnd={() => {
+                                      setDraggedLessonId(null);
+                                      setDropIndicator(null);
+                                    }}
                                     onClick={() => {
                                       onSelectLesson(lesson.id);
                                       onCloseMobile?.();
@@ -850,6 +1051,14 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
                                         : undefined
                                     }
                                     className={`group/lesson relative rounded-xl p-2.5 transition-all cursor-pointer border ${
+                                      isBeingDragged ? 'opacity-45 scale-[0.98]' : ''
+                                    } ${
+                                      isDropBefore
+                                        ? 'border-t-4 border-t-[#3b82f6]'
+                                        : isDropAfter
+                                        ? 'border-b-4 border-b-[#3b82f6]'
+                                        : ''
+                                    } ${
                                       isLight
                                         ? isActive
                                           ? 'bg-blue-50 border-blue-400 text-blue-950 font-semibold shadow-xs'
@@ -860,54 +1069,92 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
                                     }`}
                                   >
                                     <div className="flex items-start justify-between gap-1.5">
-                                      {isEditingLesson ? (
-                                        <form
-                                          onSubmit={handleRenameSubmit}
-                                          onClick={(e) => e.stopPropagation()}
-                                          className="flex items-center gap-1 flex-1"
-                                        >
-                                          <input
-                                            type="text"
-                                            autoFocus
-                                            value={editingItem.value}
-                                            onChange={(e) =>
-                                              setEditingItem({
-                                                ...editingItem,
-                                                value: e.target.value,
-                                              })
-                                            }
-                                            className="flex-1 bg-[#131314] border border-[#8ab4f8] rounded px-2 py-0.5 text-[11.5px] text-white focus:outline-none"
-                                          />
-                                          <button
-                                            type="submit"
-                                            className="p-0.5 rounded bg-[#8ab4f8] text-[#131314]"
+                                      {/* Left: Drag Handle + Position Badge (#1, #2...) + Title */}
+                                      <div className="flex items-start gap-1.5 min-w-0 flex-1">
+                                        {!isReadOnly && !isEditingLesson && (
+                                          <span
+                                            title="Giữ chuột kéo thả để đổi vị trí hoặc chuyển sang Học phần khác"
+                                            className={`mt-0.5 cursor-grab active:cursor-grabbing shrink-0 ${
+                                              isOrganizeMode
+                                                ? isLight
+                                                  ? 'text-blue-600'
+                                                  : 'text-[#8ab4f8]'
+                                                : 'text-[#70757a] opacity-50 group-hover/lesson:opacity-100'
+                                            }`}
                                           >
-                                            <Check className="w-3 h-3" />
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => setEditingItem(null)}
-                                            className="p-0.5 rounded bg-[#2d2e30] text-[#9aa0a6]"
-                                          >
-                                            <X className="w-3 h-3" />
-                                          </button>
-                                        </form>
-                                      ) : (
-                                        <p
-                                          className={`text-[12.5px] font-semibold leading-snug line-clamp-2 flex-1 ${
-                                            isLight
-                                              ? isActive
-                                                ? 'text-blue-950 font-semibold'
-                                                : 'text-slate-700'
-                                              : ''
-                                          }`}
-                                        >
-                                          {lesson.title}
-                                        </p>
-                                      )}
+                                            <GripVertical className="w-3.5 h-3.5" />
+                                          </span>
+                                        )}
 
+                                        {isEditingLesson ? (
+                                          <form
+                                            onSubmit={handleRenameSubmit}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="flex items-center gap-1 flex-1"
+                                          >
+                                            <input
+                                              type="text"
+                                              autoFocus
+                                              value={editingItem.value}
+                                              onChange={(e) =>
+                                                setEditingItem({
+                                                  ...editingItem,
+                                                  value: e.target.value,
+                                                })
+                                              }
+                                              className="flex-1 bg-[#131314] border border-[#8ab4f8] rounded px-2 py-0.5 text-[11.5px] text-white focus:outline-none"
+                                            />
+                                            <button
+                                              type="submit"
+                                              className="p-0.5 rounded bg-[#8ab4f8] text-[#131314]"
+                                            >
+                                              <Check className="w-3 h-3" />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setEditingItem(null)}
+                                              className="p-0.5 rounded bg-[#2d2e30] text-[#9aa0a6]"
+                                            >
+                                              <X className="w-3 h-3" />
+                                            </button>
+                                          </form>
+                                        ) : (
+                                          <p
+                                            className={`text-[12.5px] font-semibold leading-snug line-clamp-2 flex-1 ${
+                                              isLight
+                                                ? isActive
+                                                  ? 'text-blue-950 font-semibold'
+                                                  : 'text-slate-700'
+                                                : ''
+                                            }`}
+                                          >
+                                            <span
+                                              className={`inline-block font-mono text-[10.5px] font-bold px-1 py-0.2 rounded mr-1 ${
+                                                isLight
+                                                  ? isActive
+                                                    ? 'bg-blue-200 text-blue-900'
+                                                    : 'bg-slate-100 text-slate-600'
+                                                  : isActive
+                                                  ? 'bg-[#8ab4f8]/25 text-[#8ab4f8]'
+                                                  : 'bg-[#2d2e30] text-[#9aa0a6]'
+                                              }`}
+                                            >
+                                              #{lessonIdx + 1}
+                                            </span>
+                                            {lesson.title}
+                                          </p>
+                                        )}
+                                      </div>
+
+                                      {/* Right: Quick Action Buttons (Hover or Organize Mode) */}
                                       {!isReadOnly && !isEditingLesson && (
-                                        <div className="opacity-0 group-hover/lesson:opacity-100 flex items-center gap-0.5 transition-opacity shrink-0">
+                                        <div
+                                          className={`${
+                                            isOrganizeMode
+                                              ? 'flex'
+                                              : 'opacity-0 group-hover/lesson:opacity-100 flex'
+                                          } items-center gap-0.5 transition-opacity shrink-0`}
+                                        >
                                           {onMoveLessonOrder &&
                                             subjectLessons.length > 1 && (
                                               <>
@@ -953,6 +1200,24 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
                                                 </button>
                                               </>
                                             )}
+
+                                          {database.subjects.length > 1 && (
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setMovingLessonFolderId((prev) =>
+                                                  prev === lesson.id
+                                                    ? null
+                                                    : lesson.id
+                                                );
+                                              }}
+                                              title="Di chuyển bài học sang Học phần / Hệ cơ quan khác"
+                                              className="p-1 rounded hover:bg-[#3c4043] text-[#8ab4f8] hover:text-white cursor-pointer"
+                                            >
+                                              <FolderInput className="w-3 h-3" />
+                                            </button>
+                                          )}
+
                                           <button
                                             onClick={(e) => {
                                               e.stopPropagation();
@@ -963,7 +1228,7 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
                                               });
                                             }}
                                             title="Đổi tên bài học"
-                                            className="p-1 rounded hover:bg-[#3c4043] text-[#9aa0a6] hover:text-white"
+                                            className="p-1 rounded hover:bg-[#3c4043] text-[#9aa0a6] hover:text-white cursor-pointer"
                                           >
                                             <Edit2 className="w-3 h-3" />
                                           </button>
@@ -978,7 +1243,7 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
                                                 });
                                               }}
                                               title="Xóa bài học"
-                                              className="p-1 rounded hover:bg-[#ef4444]/20 text-[#9aa0a6] hover:text-[#ef4444]"
+                                              className="p-1 rounded hover:bg-[#ef4444]/20 text-[#9aa0a6] hover:text-[#ef4444] cursor-pointer"
                                             >
                                               <Trash2 className="w-3 h-3" />
                                             </button>
@@ -986,6 +1251,130 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
                                         </div>
                                       )}
                                     </div>
+
+                                    {/* Extended Organize & Move Controls Bar (When Organize Mode is active or Folder Move clicked) */}
+                                    {!isReadOnly &&
+                                      (isOrganizeMode || showMoveFolderSelect) && (
+                                        <div
+                                          onClick={(e) => e.stopPropagation()}
+                                          className={`mt-2 pt-1.5 border-t flex flex-wrap items-center justify-between gap-1.5 text-[10.5px] ${
+                                            isLight
+                                              ? 'border-slate-200'
+                                              : 'border-[#2d2e30]'
+                                          }`}
+                                        >
+                                          {onMoveLessonOrder &&
+                                            subjectLessons.length > 1 && (
+                                              <div className="flex items-center gap-1">
+                                                <button
+                                                  type="button"
+                                                  disabled={lessonIdx === 0}
+                                                  onClick={() =>
+                                                    onMoveLessonOrder(
+                                                      lesson.id,
+                                                      'top'
+                                                    )
+                                                  }
+                                                  title="Đưa lên đầu học phần"
+                                                  className={`px-1.5 py-0.5 rounded border font-mono cursor-pointer disabled:opacity-30 ${
+                                                    isLight
+                                                      ? 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'
+                                                      : 'bg-[#242528] border-[#3c4043] text-[#e3e3e3] hover:bg-[#3c4043]'
+                                                  }`}
+                                                >
+                                                  ⏫ Đầu
+                                                </button>
+                                                <select
+                                                  value={lessonIdx}
+                                                  onChange={(e) =>
+                                                    onMoveLessonOrder(
+                                                      lesson.id,
+                                                      Number(e.target.value)
+                                                    )
+                                                  }
+                                                  title="Nhảy tới vị trí bất kỳ trong Học phần"
+                                                  className={`px-1.5 py-0.5 rounded border font-mono font-bold cursor-pointer ${
+                                                    isLight
+                                                      ? 'bg-white border-blue-300 text-blue-800'
+                                                      : 'bg-[#131314] border-[#8ab4f8]/50 text-[#8ab4f8]'
+                                                  }`}
+                                                >
+                                                  {subjectLessons.map(
+                                                    (_, idxOpt) => (
+                                                      <option
+                                                        key={idxOpt}
+                                                        value={idxOpt}
+                                                      >
+                                                        Vị trí #{idxOpt + 1}
+                                                      </option>
+                                                    )
+                                                  )}
+                                                </select>
+                                                <button
+                                                  type="button"
+                                                  disabled={
+                                                    lessonIdx ===
+                                                    subjectLessons.length - 1
+                                                  }
+                                                  onClick={() =>
+                                                    onMoveLessonOrder(
+                                                      lesson.id,
+                                                      'bottom'
+                                                    )
+                                                  }
+                                                  title="Đưa xuống cuối học phần"
+                                                  className={`px-1.5 py-0.5 rounded border font-mono cursor-pointer disabled:opacity-30 ${
+                                                    isLight
+                                                      ? 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'
+                                                      : 'bg-[#242528] border-[#3c4043] text-[#e3e3e3] hover:bg-[#3c4043]'
+                                                  }`}
+                                                >
+                                                  ⏬ Cuối
+                                                </button>
+                                              </div>
+                                            )}
+
+                                          {onMoveLessonToSubject &&
+                                            database.subjects.length > 1 && (
+                                              <select
+                                                value={lesson.subjectId}
+                                                onChange={(e) => {
+                                                  onMoveLessonToSubject(
+                                                    lesson.id,
+                                                    e.target.value
+                                                  );
+                                                  setMovingLessonFolderId(null);
+                                                }}
+                                                title="Chuyển bài học sang Học phần / Hệ cơ quan khác"
+                                                className={`max-w-[165px] truncate px-1.5 py-0.5 rounded border text-[10.5px] font-medium cursor-pointer ${
+                                                  isLight
+                                                    ? 'bg-blue-50 border-blue-200 text-blue-900'
+                                                    : 'bg-[#1e1f20] border-[#3c4043] text-[#8ab4f8]'
+                                                }`}
+                                              >
+                                                {database.subjects.map((sub) => {
+                                                  const sys =
+                                                    database.systems.find(
+                                                      (s) =>
+                                                        s.id === sub.systemId
+                                                    );
+                                                  return (
+                                                    <option
+                                                      key={sub.id}
+                                                      value={sub.id}
+                                                    >
+                                                      📁{' '}
+                                                      {sys
+                                                        ? `${sys.name} › `
+                                                        : ''}
+                                                      {sub.name}
+                                                    </option>
+                                                  );
+                                                })}
+                                              </select>
+                                            )}
+                                        </div>
+                                      )}
 
                                     {/* Lesson Study Status & Node Mastery Progress */}
                                     <div
@@ -1016,7 +1405,7 @@ const SidebarCurriculumComponent: React.FC<SidebarCurriculumProps> = ({
                                             ? 'Trạng thái học tập'
                                             : 'Click để chuyển trạng thái học tập'
                                         }
-                                        className="flex items-center gap-1 transition-colors"
+                                        className="flex items-center gap-1 transition-colors cursor-pointer"
                                       >
                                         {lesson.status === 'Đã thuộc' ? (
                                           <CheckCircle2 className="w-3 h-3 text-[#10b981]" />
