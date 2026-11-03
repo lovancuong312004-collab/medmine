@@ -1003,7 +1003,12 @@ export function parseAndValidateAIJson(rawInput: string): {
         ? `${rawIdStr}-${lessonRandomSuffix}`
         : rawIdStr;
 
-      return {
+      const normalizedChildren =
+        childItems.length > 0
+          ? childItems.map((c: any, cIdx: number) => normalizeNode(c, depth + 1, cIdx))
+          : undefined;
+
+      const builtNode: MindmapNode = {
         id: uniqueNodeId,
         label,
         summary: summaryVal ? String(summaryVal).trim() : undefined,
@@ -1015,14 +1020,17 @@ export function parseAndValidateAIJson(rawInput: string): {
         collapsed: Boolean(raw.collapsed),
         mastery: raw.mastery || 'untested',
         clinicalNotes: extractClinicalNotes(raw),
-        children:
-          childItems.length > 0
-            ? childItems.map((c: any, cIdx: number) => normalizeNode(c, depth + 1, cIdx))
-            : undefined,
+        children: normalizedChildren,
       };
+
+      return synchronizeMindmapNode(builtNode, depth, false);
     }
 
-    const normalizedRoot = normalizeNode(rootCandidate, 0, 0);
+    const normalizedRoot = synchronizeMindmapNode(
+      normalizeNode(rootCandidate, 0, 0),
+      0,
+      true
+    );
 
     return {
       valid: true,
@@ -1042,6 +1050,104 @@ export function parseAndValidateAIJson(rawInput: string): {
       error: `Lỗi cú pháp JSON: ${err.message}. Hãy bấm "Tự động sửa & Làm sạch JSON" hoặc kiểm tra dấu ngoặc kép.`,
     };
   }
+}
+
+/**
+ * Synchronizes a MindmapNode tree across all views (Diagram, Bento, Cornell, Fishbone, Print Studio, Essay Rubric):
+ * 1. Removes redundant AI meta-summaries (`summary`) on Level 1 & Level 2 parent boxes that already have `children`.
+ * 2. Surfaces hidden medical details from `clinicalNotes` (`clinicalFeatures`, `pathogenesis`, `treatment`, `redFlags`, `pearls`)
+ *    on childless leaf nodes (depth >= 2) directly into `label` and `children` so no node ever appears as an empty heading.
+ */
+export function synchronizeMindmapNode(
+  node: MindmapNode,
+  depth = 0,
+  recursive = true
+): MindmapNode {
+  if (!node || typeof node !== 'object') return node;
+
+  const syncedChildren =
+    recursive && Array.isArray(node.children) && node.children.length > 0
+      ? node.children.map((child) => synchronizeMindmapNode(child, depth + 1, true))
+      : node.children;
+
+  const hasChildren = Array.isArray(syncedChildren) && syncedChildren.length > 0;
+
+  // 1. For Level 1 & Level 2 parent boxes that already have children, strip redundant filler `summary`
+  if (depth >= 1 && depth <= 2 && hasChildren) {
+    return {
+      ...node,
+      summary: undefined,
+      children: syncedChildren,
+    };
+  }
+
+  // 2. For childless leaf nodes at depth >= 2, surface any hidden details from `clinicalNotes` or `summary`
+  if (depth >= 2 && !hasChildren) {
+    let nextLabel = String(node.label || '').trim();
+    let nextSummary = node.summary ? String(node.summary).trim() : undefined;
+    const synthesizedChildren: MindmapNode[] = [];
+
+    const cn = node.clinicalNotes as any;
+    const noteItems: { text: string; badge?: SemanticBadgeType }[] = [];
+
+    const pushNoteText = (val: unknown, badgeType?: SemanticBadgeType) => {
+      if (!val) return;
+      if (Array.isArray(val)) {
+        val.forEach((v) => pushNoteText(v, badgeType));
+        return;
+      }
+      const str = String(val).trim();
+      if (!str) return;
+      if (nextLabel.toLowerCase().includes(str.toLowerCase().slice(0, 28))) {
+        return;
+      }
+      noteItems.push({ text: str, badge: badgeType || node.badge });
+    };
+
+    if (cn && typeof cn === 'object') {
+      pushNoteText(cn.clinicalFeatures, node.badge || 'diagnostic');
+      pushNoteText(cn.pathogenesis, node.badge || 'mechanism');
+      pushNoteText(cn.treatment, node.badge || 'treatment');
+      pushNoteText(cn.redFlags, 'danger');
+      pushNoteText(cn.pearls, 'warning');
+    }
+
+    // Merge concise summary into label if label has no colon
+    if (nextSummary && !nextLabel.includes(':')) {
+      nextLabel = `${nextLabel}: ${nextSummary}`;
+      nextSummary = undefined;
+    }
+
+    if (noteItems.length > 0) {
+      // If label is just a bare heading without ':' (e.g., "Triệu chứng Toàn thân"), attach the first note directly after ':'
+      let startIdx = 0;
+      if (!nextLabel.includes(':')) {
+        nextLabel = `${nextLabel}: ${noteItems[0].text}`;
+        startIdx = 1;
+      }
+
+      for (let i = startIdx; i < noteItems.length; i++) {
+        synthesizedChildren.push({
+          id: `${node.id}-auto-${i + 1}`,
+          label: noteItems[i].text,
+          badge: noteItems[i].badge,
+          mastery: node.mastery || 'untested',
+        });
+      }
+    }
+
+    return {
+      ...node,
+      label: nextLabel,
+      summary: nextSummary,
+      children: synthesizedChildren.length > 0 ? synthesizedChildren : undefined,
+    };
+  }
+
+  return {
+    ...node,
+    children: syncedChildren,
+  };
 }
 
 /**

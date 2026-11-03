@@ -909,7 +909,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                           </div>
                         </div>
 
-                        {pillar.summary && (
+                        {pillar.summary && lvl2Nodes.length === 0 && (
                           <div
                             style={{
                               backgroundColor: theme.subBg,
@@ -957,7 +957,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                                   {renderPrintableKeywordText(lvl2.label)}
                                 </div>
 
-                                {lvl2.summary && (
+                                {lvl2.summary && lvl3Nodes.length === 0 && (
                                   <p
                                     style={{
                                       fontSize: '9pt',
@@ -1134,7 +1134,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                             <span className="font-mono mr-1">{pIdx + 1}.</span>
                             {cleanNodeLabel(pillar.label)}
                           </div>
-                          {pillar.summary && (
+                          {pillar.summary && lvl2Nodes.length === 0 && (
                             <p
                               style={{
                                 fontSize: '9.5pt',
@@ -1188,7 +1188,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                                       {pIdx + 1}.{l2Idx + 1}.
                                     </span>
                                     {renderPrintableKeywordText(lvl2.label)}
-                                    {lvl2.summary && (
+                                    {lvl2.summary && lvl3Nodes.length === 0 && (
                                       <span
                                         style={{ fontSize: '9.5pt' }}
                                         className="font-normal text-neutral-800"
@@ -1348,7 +1348,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                             {cleanNodeLabel(pillar.label)}
                           </h3>
 
-                          {pillar.summary && (
+                          {pillar.summary && lvl2Nodes.length === 0 && (
                             <div
                               style={{
                                 fontSize: '9pt',
@@ -1413,7 +1413,7 @@ export const A4PrintStudioModal: React.FC<A4PrintStudioModalProps> = ({
                                   >
                                     {cleanNodeLabel(lvl2.label)}
                                   </span>
-                                  {lvl2.summary && (
+                                  {lvl2.summary && lvl3Nodes.length === 0 && (
                                     <span
                                       style={{ fontSize: '9.5pt' }}
                                       className="font-normal text-neutral-800 italic"

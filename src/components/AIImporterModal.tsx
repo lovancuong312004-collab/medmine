@@ -22,6 +22,7 @@ import {
 import {
   AI_PROMPT_TEMPLATE,
   SAMPLE_MARKDOWN_IMPORT,
+  OTITIS_MEDIA_ACUTE_LESSON,
 } from '../data/sampleLessons';
 
 interface AIImporterModalProps {
@@ -89,7 +90,7 @@ export const AIImporterModal: React.FC<AIImporterModalProps> = ({
       }
       setValidationMessage({
         type: 'success',
-        text: `Đã tự động làm sạch & kiểm tra hợp lệ! Nhận diện bài "${res.data.title}" với ${res.data.nodeCount} node (Độ sâu: Cấp ${res.data.maxDepth}). Sẵn sàng dựng sơ đồ.`,
+        text: `Đã tự động làm sạch & đồng bộ hệ thống! Nhận diện bài "${res.data.title}" với ${res.data.nodeCount} node (Độ sâu: Cấp ${res.data.maxDepth}). Sẵn sàng dựng sơ đồ.`,
       });
     }
   };
@@ -136,82 +137,14 @@ export const AIImporterModal: React.FC<AIImporterModalProps> = ({
 
   const loadSampleJsonDemo = () => {
     const sampleJson = {
-      title: 'Nhồi máu cơ tim cấp ST chênh lên (STEMI)',
-      tags: ['Cấp cứu Tim mạch', 'ESC', 'Nội khoa'],
-      rootNode: {
-        id: 'stemi-root',
-        label: 'Nhồi máu cơ tim cấp ST chênh lên (STEMI)',
-        summary: 'Hoại tử cơ tim cấp tính do tắc hoàn toàn động mạch vành thượng tâm mạc',
-        clinicalNotes: {
-          pathogenesis:
-            'Nứt vỡ mảng xơ vữa không ổn định -> Hoạt hóa kết tập tiểu cầu và dòng thác đông máu -> Huyết khối đỏ làm tắc hoàn toàn lòng mạch vành.',
-          redFlags: [
-            'Đau thắt ngực kiểu mạch vành kéo dài > 20 phút không đáp ứng Nitroglycerin',
-            'Sốc tim (Huyết áp tâm thu < 90 mmHg, chi lạnh ẩm, thiểu niệu)',
-          ],
-          treatment:
-            'Tái tưới máu mạch vành khẩn cấp: Can thiệp mạch vành qua da thì đầu (Primary PCI) trong vòng <= 90-120 phút.',
-        },
-        children: [
-          {
-            id: 'stemi-c1-1',
-            label: 'Chẩn đoán xác định (Tiêu chuẩn Định nghĩa toàn cầu lần 4)',
-            accentColor: '#8ab4f8',
-            children: [
-              {
-                id: 'stemi-c2-1',
-                label: 'Tiêu chuẩn Điện tâm đồ 12 chuyển đạo (Trong vòng 10 phút đầu)',
-                children: [
-                  {
-                    id: 'stemi-c3-1',
-                    label: 'ST chênh lên mới tại điểm J ở >= 2 chuyển đạo liên tiếp (V2-V3 >= 2mm ở nam, >= 1.5mm ở nữ)',
-                    badge: 'diagnostic',
-                  },
-                  {
-                    id: 'stemi-c3-2',
-                    label: 'Block nhánh trái (LBBB) mới xuất hiện hoặc theo tiêu chuẩn Sgarbossa',
-                    badge: 'danger',
-                  },
-                ],
-              },
-              {
-                id: 'stemi-c2-2',
-                label: 'Động học Men tim Troponin siêu nhạy (hs-cTn)',
-                children: [
-                  {
-                    id: 'stemi-c3-3',
-                    label: 'Không chờ kết quả Troponin mới quyết định tái tưới máu nếu ECG đã có ST chênh lên điển hình',
-                    badge: 'warning',
-                  },
-                ],
-              },
-            ],
-          },
-          {
-            id: 'stemi-c1-2',
-            label: 'Xử trí Cấp cứu & Tái tưới máu',
-            accentColor: '#81c995',
-            children: [
-              {
-                id: 'stemi-c2-3',
-                label: 'Kháng kết tập tiểu cầu kép (DAPT) liều nạp',
-                children: [
-                  {
-                    id: 'stemi-c3-4',
-                    label: 'Aspirin 150-300mg nhai + Ticagrelor 180mg (hoặc Prasugrel 60mg / Clopidogrel 600mg)',
-                    badge: 'treatment',
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
+      title: OTITIS_MEDIA_ACUTE_LESSON.title,
+      tags: OTITIS_MEDIA_ACUTE_LESSON.tags,
+      rootNode: OTITIS_MEDIA_ACUTE_LESSON.rootNode,
     };
     setJsonInput(JSON.stringify(sampleJson, null, 2));
     setValidationMessage({
       type: 'success',
-      text: 'Đã nạp dữ liệu mẫu JSON "Nhồi máu cơ tim cấp (STEMI)" 4 cấp độ!',
+      text: 'Đã nạp dữ liệu chuẩn 6 nhánh "Câu 1: Viêm tai giữa cấp tính mủ" (Đầy đủ Định nghĩa, Nguyên nhân, Triệu chứng, Tiến triển, Chẩn đoán, Điều trị)!',
     });
   };
 
@@ -340,7 +273,7 @@ export const AIImporterModal: React.FC<AIImporterModalProps> = ({
                   className="px-3 py-1.5 rounded-lg bg-[#2d2e30] hover:bg-[#3c4043] text-[11.5px] font-medium text-[#8ab4f8] flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer"
                 >
                   <Wand2 className="w-3.5 h-3.5" />
-                  <span>Nạp JSON mẫu (STEMI)</span>
+                  <span>Nạp JSON chuẩn (VTG cấp tính mủ)</span>
                 </button>
               </div>
 

@@ -352,7 +352,7 @@ export const CornellNoteView: React.FC<SharedDiagramViewProps> = ({
                   )}
                 </span>
 
-                {node.summary && (
+                {node.summary && !hasChildren && (
                   <p className="text-[11.5px] text-[#9aa0a6] mt-0.5 leading-snug">
                     {node.summary}
                   </p>
@@ -836,7 +836,7 @@ export const FishboneDiagramView: React.FC<
               blurred ? 'blur-[5px] opacity-55 select-none' : ''
             }`}
           >
-            <div className="font-display font-bold text-[13.5px] text-white leading-snug">
+            <div className={`font-display font-bold text-[13.5px] leading-snug ${isLight ? 'text-slate-900' : 'text-white'}`}>
               {showPillarNum && (
                 <span
                   style={{ color: accentColor }}
@@ -847,8 +847,8 @@ export const FishboneDiagramView: React.FC<
               )}
               <span>{pillar.label}</span>
             </div>
-            {pillar.summary && (
-              <p className="text-[11px] text-[#b8bdc2] mt-0.5 line-clamp-2">
+            {pillar.summary && directCount === 0 && (
+              <p className={`text-[11px] mt-0.5 line-clamp-2 ${isLight ? 'text-slate-600' : 'text-[#b8bdc2]'}`}>
                 {pillar.summary}
               </p>
             )}

@@ -26,7 +26,10 @@ import {
   CloudSyncStatus,
   SecuritySettings,
 } from './types/mindmap';
-import { INITIAL_MEDMIND_DATA } from './data/sampleLessons';
+import {
+  INITIAL_MEDMIND_DATA,
+  OTITIS_MEDIA_ACUTE_LESSON,
+} from './data/sampleLessons';
 import {
   toggleNodeCollapseById,
   setTreeExpansionByLevel,
@@ -36,6 +39,7 @@ import {
   findNodeWithContext,
   calculateMasteryStats,
   parseAndValidateAIJson,
+  synchronizeMindmapNode,
 } from './utils/mindmapLayout';
 import {
   getEffectiveSupabaseConfig,
@@ -64,15 +68,91 @@ interface SavedAuthSession {
   savedAt: string;
 }
 
+/**
+ * Automatically upgrades any incomplete 4-pillar "Viêm tai giữa cấp tính" lesson
+ * (where "1. Định nghĩa" was merged/skipped and leaf details were trapped in clinicalNotes)
+ * to the complete 6-pillar textbook version, and runs synchronizeMindmapNode on all lessons.
+ */
+function upgradeAndSynchronizeDatabase(rawDb: MedMindDatabase): MedMindDatabase {
+  if (!rawDb || !Array.isArray(rawDb.lessons)) {
+    return INITIAL_MEDMIND_DATA;
+  }
+
+  const systems = Array.isArray(rawDb.systems) ? [...rawDb.systems] : [];
+  if (!systems.some((s) => s.id === 'sys-ent')) {
+    systems.unshift({
+      id: 'sys-ent',
+      name: 'Tai Mũi Họng',
+      iconName: 'Stethoscope',
+    });
+  }
+
+  const subjects = Array.isArray(rawDb.subjects) ? [...rawDb.subjects] : [];
+  if (!subjects.some((sub) => sub.id === 'sub-ent-clin')) {
+    subjects.unshift({
+      id: 'sub-ent-clin',
+      systemId: 'sys-ent',
+      name: 'Bệnh học Tai Mũi Họng',
+      code: 'ENT301',
+    });
+  }
+
+  let hasOtitisMediaLesson = false;
+  const upgradedLessons: LessonMindmap[] = rawDb.lessons.map((lesson) => {
+    if (!lesson || !lesson.rootNode) return lesson;
+
+    const lowerTitle = String(lesson.title || lesson.rootNode.label || '').toLowerCase();
+    const isOtitisMedia =
+      lesson.id === 'lesson-vtg-cap-tinh-mu' ||
+      lesson.rootNode.id?.startsWith('vtg-cap-root') ||
+      lowerTitle.includes('viêm tai giữa cấp');
+
+    if (isOtitisMedia) {
+      hasOtitisMediaLesson = true;
+      const firstPillarLabel = String(
+        lesson.rootNode.children?.[0]?.label || ''
+      ).toLowerCase();
+      // If it's the old 4-pillar version that jumped straight to "Đại cương & Nguyên nhân", upgrade it to the complete 6-pillar textbook version
+      if (
+        (lesson.rootNode.children?.length || 0) <= 4 ||
+        firstPillarLabel.includes('đại cương & nguyên nhân')
+      ) {
+        return {
+          ...OTITIS_MEDIA_ACUTE_LESSON,
+          id: lesson.id,
+          systemId: lesson.systemId || 'sys-ent',
+          subjectId: lesson.subjectId || 'sub-ent-clin',
+        };
+      }
+    }
+
+    return {
+      ...lesson,
+      rootNode: synchronizeMindmapNode(lesson.rootNode, 0, true),
+    };
+  });
+
+  if (!hasOtitisMediaLesson) {
+    upgradedLessons.unshift(OTITIS_MEDIA_ACUTE_LESSON);
+  }
+
+  return {
+    ...rawDb,
+    systems,
+    subjects,
+    lessons: upgradedLessons,
+  };
+}
+
 export default function App() {
-  // Load initial database from LocalStorage or fall back to 4-level sample lessons
+  // Load initial database from LocalStorage or fall back to sample lessons
   const [database, setDatabase] = useState<MedMindDatabase>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_DB);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && Array.isArray(parsed.lessons) && parsed.lessons.length > 0) {
-          return parsed;
+          return upgradeAndSynchronizeDatabase(parsed);
         }
       }
     } catch {
@@ -297,15 +377,16 @@ export default function App() {
       setIsPullingInitialCloud(false);
 
       if (res.ok && res.database) {
-        setDatabase(res.database);
+        const syncedDb = upgradeAndSynchronizeDatabase(res.database);
+        setDatabase(syncedDb);
         setCloudSyncStatus('synced');
 
         setActiveLessonId((prevId) => {
-          const matchedLesson = res.database!.lessons.find((l) => l.id === prevId);
+          const matchedLesson = syncedDb.lessons.find((l) => l.id === prevId);
           if (matchedLesson) {
             return prevId;
           }
-          const fallbackLesson = res.database!.lessons[0];
+          const fallbackLesson = syncedDb.lessons[0];
           if (fallbackLesson) {
             setSelectedNodeId(fallbackLesson.rootNode?.id || null);
             return fallbackLesson.id;
@@ -318,7 +399,7 @@ export default function App() {
           if (savedAuthRaw) {
             const parsed = JSON.parse(savedAuthRaw) as SavedAuthSession;
             const cloudPass =
-              res.database.security?.ownerPassword || DEFAULT_OWNER_PASSWORD;
+              syncedDb.security?.ownerPassword || DEFAULT_OWNER_PASSWORD;
             if (
               parsed.role === 'owner' &&
               (!parsed.tokenPassword || parsed.tokenPassword !== cloudPass)
@@ -363,10 +444,11 @@ export default function App() {
       setCloudSyncStatus('syncing');
       const res = await pullDatabaseFromSupabase(supabaseConfig);
       if (res.ok && res.database) {
-        setDatabase(res.database);
-        if (res.database.lessons[0]) {
-          setActiveLessonId(res.database.lessons[0].id);
-          setSelectedNodeId(res.database.lessons[0].rootNode?.id || null);
+        const syncedDb = upgradeAndSynchronizeDatabase(res.database);
+        setDatabase(syncedDb);
+        if (syncedDb.lessons[0]) {
+          setActiveLessonId(syncedDb.lessons[0].id);
+          setSelectedNodeId(syncedDb.lessons[0].rootNode?.id || null);
         }
         setCloudSyncStatus('synced');
         showToast('Đăng nhập Chủ sở hữu & tải dữ liệu mới nhất từ Supabase thành công!');

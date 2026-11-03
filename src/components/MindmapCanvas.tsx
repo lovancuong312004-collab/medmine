@@ -270,7 +270,7 @@ const MindmapNodeCard: React.FC<MindmapNodeCardProps> = React.memo(
               <span>{node.label}</span>
             </div>
 
-            {node.summary && depth <= 2 && (
+            {node.summary && (depth === 0 || !hasChildren) && (
               <p
                 className={`text-[11.5px] mt-1 pt-1 border-t line-clamp-2 leading-snug ${
                   depth === 0
@@ -1081,7 +1081,7 @@ const MindmapCanvasComponent: React.FC<MindmapCanvasProps> = ({
             <p className={`font-display font-semibold text-[13.5px] leading-snug ${isLight ? 'text-slate-900' : 'text-white'}`}>
               {node.label}
             </p>
-            {node.summary && (
+            {node.summary && !hasChildren && (
               <p className={`mt-1 text-[11.5px] leading-snug ${isLight ? 'text-slate-600' : 'text-[#b0b5ba]'}`}>
                 {node.summary}
               </p>
@@ -1511,7 +1511,7 @@ const MindmapCanvasComponent: React.FC<MindmapCanvasProps> = ({
                         className="px-3.5 py-2.5 border-b border-[#3c4043] flex items-start justify-between gap-2"
                       >
                         <div className="min-w-0 flex-1">
-                          <h3 className="font-display font-bold text-[14.5px] text-white leading-snug">
+                          <h3 className={`font-display font-bold text-[14.5px] leading-snug ${isLight ? 'text-slate-900' : 'text-white'}`}>
                             {showPillarNum && (
                               <span
                                 style={{ color: accentColor }}
@@ -1522,8 +1522,8 @@ const MindmapCanvasComponent: React.FC<MindmapCanvasProps> = ({
                             )}
                             <span>{pillar.label}</span>
                           </h3>
-                          {pillar.summary && (
-                            <p className="text-[11.5px] text-[#b0b5ba] mt-0.5 leading-snug">
+                          {pillar.summary && directCount === 0 && (
+                            <p className={`text-[11.5px] mt-0.5 leading-snug ${isLight ? 'text-slate-600' : 'text-[#b0b5ba]'}`}>
                               {pillar.summary}
                             </p>
                           )}

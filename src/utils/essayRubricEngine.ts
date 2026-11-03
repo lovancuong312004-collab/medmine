@@ -25,7 +25,8 @@ function ensureStringArray(val: unknown): string[] {
  */
 export function normalizeNodeForPrint(
   rawNode: any,
-  fallbackId = 'node-0'
+  fallbackId = 'node-0',
+  depth = 0
 ): MindmapNode {
   if (!rawNode || typeof rawNode !== 'object') {
     return {
@@ -62,15 +63,74 @@ export function normalizeNodeForPrint(
     : [];
 
   const safeId = String(rawNode?.id || fallbackId);
-  const safeLabel = String(
+  let safeLabel = String(
     rawNode?.label || rawNode?.title || rawNode?.name || 'Mục kiến thức'
-  );
-  const safeSummary =
+  ).trim();
+  let safeSummary =
     rawNode?.summary != null
-      ? String(rawNode.summary)
+      ? String(rawNode.summary).trim()
       : rawNode?.note != null
-      ? String(rawNode.note)
+      ? String(rawNode.note).trim()
       : '';
+
+  let normalizedChildren: MindmapNode[] = rawChildren
+    .filter((c: any) => c != null)
+    .map((child: any, idx: number) =>
+      normalizeNodeForPrint(child, `${safeId}-${idx + 1}`, depth + 1)
+    );
+
+  // 1. Strip redundant AI meta-summaries on Level 1 & Level 2 parent boxes that already have children
+  if (depth >= 1 && depth <= 2 && normalizedChildren.length > 0) {
+    safeSummary = '';
+  }
+
+  // 2. Surface hidden details from `clinicalNotes` or `summary` on childless leaf nodes (depth >= 2)
+  if (depth >= 2 && normalizedChildren.length === 0) {
+    if (safeSummary && !safeLabel.includes(':')) {
+      safeLabel = `${safeLabel}: ${safeSummary}`;
+      safeSummary = '';
+    }
+
+    if (normalizedNotes) {
+      const noteItems: { text: string; badge?: any }[] = [];
+      const pushNote = (val: unknown, badge?: string) => {
+        if (!val) return;
+        if (Array.isArray(val)) {
+          val.forEach((v) => pushNote(v, badge));
+          return;
+        }
+        const s = String(val).trim();
+        if (!s) return;
+        if (safeLabel.toLowerCase().includes(s.toLowerCase().slice(0, 28))) {
+          return;
+        }
+        noteItems.push({ text: s, badge: badge || rawNode?.badge });
+      };
+
+      pushNote(normalizedNotes.clinicalFeatures, rawNode?.badge || 'diagnostic');
+      pushNote(normalizedNotes.pathogenesis, rawNode?.badge || 'mechanism');
+      pushNote(normalizedNotes.treatment, rawNode?.badge || 'treatment');
+      pushNote(normalizedNotes.redFlags, 'danger');
+      pushNote(normalizedNotes.pearls, 'warning');
+
+      if (noteItems.length > 0) {
+        let startIdx = 0;
+        if (!safeLabel.includes(':')) {
+          safeLabel = `${safeLabel}: ${noteItems[0].text}`;
+          startIdx = 1;
+        }
+        for (let i = startIdx; i < noteItems.length; i++) {
+          normalizedChildren.push({
+            id: `${safeId}-auto-${i + 1}`,
+            label: noteItems[i].text,
+            summary: '',
+            badge: noteItems[i].badge,
+            children: [],
+          });
+        }
+      }
+    }
+  }
 
   return {
     ...rawNode,
@@ -79,11 +139,7 @@ export function normalizeNodeForPrint(
     summary: safeSummary,
     badge: rawNode?.badge != null ? String(rawNode.badge) : undefined,
     clinicalNotes: normalizedNotes,
-    children: rawChildren
-      .filter((c: any) => c != null)
-      .map((child: any, idx: number) =>
-        normalizeNodeForPrint(child, `${safeId}-${idx + 1}`)
-      ),
+    children: normalizedChildren,
   };
 }
 
